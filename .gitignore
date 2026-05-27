@@ -3,12 +3,17 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.cache/
 .ipynb_checkpoints/
 .agents/
 .codex/
+*.egg-info/
 
 data/raw/
+data/worlds/
+data/synthetic/
 data/tokenized/
+doc/
 outputs/
 wandb/
 

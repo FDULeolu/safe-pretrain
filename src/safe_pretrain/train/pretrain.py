@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import time
 from pathlib import Path
@@ -36,12 +37,13 @@ def run_pretraining(cfg: Any) -> None:
         project_dir=str(cfg.project.output_dir),
     )
 
-    wandb_run = _maybe_init_wandb(cfg, accelerator, mixed_precision)
     tokenizer = _load_tokenizer(cfg)
     model = _build_model(cfg, tokenizer)
     dataset = _load_tokenized_dataset(cfg.data.tokenized.path)
+    resolved_block_size = _resolve_tokenized_block_size(cfg.data.tokenized.path, dataset)
     train_dataset = dataset["train"]
     eval_dataset = _get_eval_dataset(dataset)
+    wandb_run = _maybe_init_wandb(cfg, accelerator, mixed_precision, resolved_block_size)
 
     train_loader = _build_dataloader(train_dataset, cfg, shuffle=True)
     eval_loader = _build_dataloader(eval_dataset, cfg, shuffle=False) if eval_dataset is not None else None
@@ -90,7 +92,7 @@ def run_pretraining(cfg: Any) -> None:
     accelerator.print(
         "Training with "
         f"{accelerator.num_processes} process(es), mixed_precision={mixed_precision}, "
-        f"max_train_steps={max_train_steps}"
+        f"block_size={resolved_block_size}, max_train_steps={max_train_steps}"
     )
 
     progress = tqdm(
@@ -169,6 +171,7 @@ def run_pretraining(cfg: Any) -> None:
                         "train/tokens_per_sec": rates["tokens_per_sec"],
                         "train/samples_per_sec": rates["samples_per_sec"],
                         "train/global_step": completed_steps,
+                        "data/block_size": resolved_block_size,
                     }
                     log_payload.update(_profiler_metrics(accelerator, profiler, cfg))
                     _log_metrics(wandb_run, log_payload, completed_steps)
@@ -193,6 +196,7 @@ def run_pretraining(cfg: Any) -> None:
                         samples_seen,
                         epoch,
                         micro_step_in_epoch,
+                        resolved_block_size,
                     )
                     save_training_checkpoint(
                         accelerator,
@@ -219,7 +223,14 @@ def run_pretraining(cfg: Any) -> None:
             break
 
     if completed_steps > 0:
-        state = _trainer_state(completed_steps, tokens_seen, samples_seen, last_epoch, 0)
+        state = _trainer_state(
+            completed_steps,
+            tokens_seen,
+            samples_seen,
+            last_epoch,
+            0,
+            resolved_block_size,
+        )
         save_training_checkpoint(accelerator, model, tokenizer, cfg, completed_steps, state)
 
     progress.close()
@@ -306,6 +317,27 @@ def _load_tokenized_dataset(path: str) -> DatasetDict:
     return dataset
 
 
+def _resolve_tokenized_block_size(path: str, dataset: DatasetDict) -> int:
+    metadata_path = Path(path) / "metadata.json"
+    if metadata_path.exists():
+        with metadata_path.open("r", encoding="utf-8") as handle:
+            metadata = json.load(handle)
+        block_size = int(metadata["block_size"])
+        if block_size > 0:
+            return block_size
+
+    train_dataset = dataset["train"]
+    if len(train_dataset) == 0:
+        raise ValueError("Cannot infer block_size from an empty tokenized train split.")
+    first = train_dataset[0]
+    if "input_ids" not in first:
+        raise KeyError("Tokenized dataset samples must contain an input_ids field.")
+    block_size = len(first["input_ids"])
+    if block_size <= 0:
+        raise ValueError("Inferred non-positive block_size from the tokenized dataset.")
+    return block_size
+
+
 def _get_eval_dataset(dataset: DatasetDict):
     if "validation" in dataset:
         return dataset["validation"]
@@ -333,7 +365,12 @@ def _build_dataloader(dataset: Any, cfg: Any, shuffle: bool) -> DataLoader:
     return DataLoader(**kwargs)
 
 
-def _maybe_init_wandb(cfg: Any, accelerator: Accelerator, mixed_precision: str):
+def _maybe_init_wandb(
+    cfg: Any,
+    accelerator: Accelerator,
+    mixed_precision: str,
+    block_size: int,
+):
     enabled = bool(cfg.wandb.get("enabled", False))
     if not enabled or not accelerator.is_main_process:
         return None
@@ -342,9 +379,14 @@ def _maybe_init_wandb(cfg: Any, accelerator: Accelerator, mixed_precision: str):
 
     payload = to_plain_container(cfg)
     payload["runtime"]["resolved_mixed_precision"] = mixed_precision
+    payload["data"]["tokenized"]["resolved_block_size"] = block_size
     payload["system"] = {
         "num_processes": accelerator.num_processes,
-        "global_batch_tokens": _global_batch_tokens(cfg, accelerator.num_processes),
+        "global_batch_tokens": _global_batch_tokens(
+            cfg,
+            accelerator.num_processes,
+            block_size,
+        ),
     }
     return wandb.init(
         project=str(cfg.wandb.project),
@@ -393,10 +435,10 @@ def _maybe_sync_cuda(accelerator: Accelerator, cfg: Any) -> None:
         torch.cuda.synchronize(accelerator.device)
 
 
-def _global_batch_tokens(cfg: Any, num_processes: int) -> int:
+def _global_batch_tokens(cfg: Any, num_processes: int, block_size: int) -> int:
     return (
         int(cfg.dataloader.per_device_batch_size)
-        * int(cfg.data.tokenized.block_size)
+        * int(block_size)
         * int(cfg.train.gradient_accumulation_steps)
         * int(num_processes)
     )
@@ -416,6 +458,7 @@ def _trainer_state(
     samples_seen: int,
     epoch: int,
     micro_step_in_epoch: int,
+    block_size: int,
 ) -> dict[str, int]:
     return {
         "global_step": int(global_step),
@@ -423,6 +466,7 @@ def _trainer_state(
         "samples_seen": int(samples_seen),
         "epoch": int(epoch),
         "micro_step_in_epoch": int(micro_step_in_epoch),
+        "block_size": int(block_size),
     }
 
 

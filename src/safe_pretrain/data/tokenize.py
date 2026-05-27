@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-from itertools import chain
 from pathlib import Path
 from typing import Any
 
-from datasets import DatasetDict
+from datasets import Dataset, DatasetDict, Features, Sequence, Value
+from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 
 from safe_pretrain.data.load_raw import load_raw_dataset
@@ -61,18 +61,6 @@ def tokenize_and_pack(cfg: Any) -> Path:
             return {"input_ids": []}
         return tokenizer(texts, add_special_tokens=False, return_attention_mask=False)
 
-    def group_texts(examples: dict[str, list[list[int]]]) -> dict[str, list[list[int]]]:
-        concatenated = list(chain.from_iterable(examples["input_ids"]))
-        total_length = (len(concatenated) // block_size) * block_size
-        if total_length == 0:
-            return {"input_ids": []}
-        return {
-            "input_ids": [
-                concatenated[idx : idx + block_size]
-                for idx in range(0, total_length, block_size)
-            ]
-        }
-
     tokenized_splits = {}
     for split_name, split_dataset in raw.items():
         if text_column not in split_dataset.column_names:
@@ -84,14 +72,10 @@ def tokenize_and_pack(cfg: Any) -> Path:
             batched=True,
             remove_columns=split_dataset.column_names,
             num_proc=num_proc,
+            load_from_cache_file=False,
             desc=f"Tokenizing {split_name}",
         )
-        packed = tokenized.map(
-            group_texts,
-            batched=True,
-            num_proc=num_proc,
-            desc=f"Packing {split_name}",
-        )
+        packed = pack_tokenized_dataset(tokenized, block_size, split_name=split_name)
         tokenized_splits[split_name] = packed
 
     dataset = DatasetDict(tokenized_splits)
@@ -114,3 +98,27 @@ def _write_metadata(output_path: Path, cfg: Any, dataset: DatasetDict) -> None:
     }
     with (output_path / "metadata.json").open("w", encoding="utf-8") as handle:
         json.dump(metadata, handle, indent=2, sort_keys=True)
+
+
+def pack_tokenized_dataset(
+    tokenized: Dataset,
+    block_size: int,
+    *,
+    split_name: str = "split",
+) -> Dataset:
+    features = Features({"input_ids": Sequence(Value("int32"))})
+
+    def iter_blocks():
+        buffer: list[int] = []
+        for row in tqdm(
+            tokenized,
+            desc=f"Packing {split_name}",
+            total=len(tokenized),
+            unit="doc",
+        ):
+            buffer.extend(row["input_ids"])
+            while len(buffer) >= block_size:
+                yield {"input_ids": buffer[:block_size]}
+                buffer = buffer[block_size:]
+
+    return Dataset.from_generator(iter_blocks, features=features)

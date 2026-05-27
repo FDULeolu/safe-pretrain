@@ -1,0 +1,34 @@
+render:
+  name: ${pretrain.reverse_ratio}reverse_${pretrain.train_fraction}train_${templates.num_variants_per_type}tpl_${templates.cause_order}
+  seed: 123
+  output_dir: data/worlds/${world.name}/pretrain/${render.name}
+  overwrite: false
+
+world:
+  name: synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap
+  path: data/worlds/${world.name}
+  expected_world_id: null
+
+pretrain:
+  target_records: null
+  target_tokens: 300000000
+  estimated_tokens_per_record: 24
+  train_fraction: 0.99
+  validation_fraction: 0.01
+  reverse_ratio: 0.0
+  include_recipe_metadata: false
+
+templates:
+  enabled_types:
+    - forward
+    - reverse
+  num_variants_per_type: 4
+  cause_order: canonical
+  include_record_id_in_text: false
+  include_record_id_in_metadata: true
+
+audit:
+  assert_stage2_rendering_valid: true
+  assert_no_restricted_reverse_in_pretrain: true
+  assert_no_record_id_in_text: true
+  write_audit_json: true

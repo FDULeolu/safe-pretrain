@@ -127,6 +127,30 @@ The tokenizer script:
 Training reads only fixed-size token blocks. This keeps the training loop simple
 and avoids tokenizer overhead during GPU training.
 
+The training loop resolves the actual block size from the saved tokenized
+dataset metadata. `data.tokenized.block_size` is therefore required for
+tokenization, but it does not need to be repeated or kept in sync manually when
+launching training.
+
+For synthetic world data, `data.tokenized.path` should live under the rendered
+pretrain dataset directory, for example:
+
+```text
+data/worlds/<world_name>/pretrain/<render_name>/tokenized/bs2048
+```
+
+This keeps raw JSONL, tokenized blocks, templates, render manifest, and audit
+files under the same world lineage.
+
+The ready-to-run smoke path is:
+
+```bash
+bash scripts/run_smoke_pretrain.sh
+```
+
+It generates `examples/smoke_data`, tokenizes to 512-token blocks, and launches
+a short training run with WandB disabled.
+
 ## Training Flow
 
 Launch through the wrapper:
@@ -145,10 +169,11 @@ The training loop:
 2. configures TF32 if enabled;
 3. initializes SmolLM2-135M from config;
 4. loads the packed tokenized dataset;
-5. builds DataLoaders with pinned memory and persistent workers;
-6. runs Accelerate DDP with gradient accumulation;
-7. logs training and evaluation metrics;
-8. periodically saves resumable checkpoints and Hugging Face model weights.
+5. resolves block size from the tokenized dataset metadata;
+6. builds DataLoaders with pinned memory and persistent workers;
+7. runs Accelerate DDP with gradient accumulation;
+8. logs training and evaluation metrics;
+9. periodically saves resumable checkpoints and Hugging Face model weights.
 
 ## Lightweight Throughput Optimizations
 

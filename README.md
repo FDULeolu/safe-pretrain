@@ -4,9 +4,9 @@ Lightweight infrastructure for causal language-model pretraining experiments
 using the SmolLM2-135M architecture, Transformers, Accelerate, Datasets, and
 WandB.
 
-The current code focuses on pretraining infrastructure only. Synthetic data
-generation, SFT, and task-specific safety evaluation can be added on top of the
-same raw text and tokenized dataset interfaces.
+The current code includes pretraining infrastructure and a synthetic world
+generator. SFT and task-specific safety evaluation can be added on top of the
+same fixed-world metadata and raw text interfaces.
 
 ## Setup
 
@@ -68,6 +68,59 @@ data:
 
 Supported raw formats are `jsonl`, `json`, `csv`, `parquet`, `text`, and `hf`.
 
+## Synthetic Data
+
+Synthetic data generation is intentionally split into two configs.
+
+Create a fixed world groundtruth:
+
+```bash
+python scripts/create_synthetic_world.py \
+  --config configs/synthetic_world.yaml
+```
+
+This writes:
+
+```text
+data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/
+  world_manifest.json
+  vocab/
+  relations.jsonl
+  splits.json
+  audit_world.json
+```
+
+Render a pretraining dataset from that fixed world:
+
+```bash
+python scripts/render_synthetic_pretrain.py \
+  --config configs/synthetic_pretrain_render.yaml
+```
+
+This writes:
+
+```text
+data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/0.0reverse_0.99train_4tpl_canonical/
+  templates.json
+  experiment_splits.json
+  pretrain_train.jsonl
+  pretrain_validation.jsonl
+  render_manifest.json
+  audit_render.json
+  tokenized/
+```
+
+`world_manifest.json` is the groundtruth source of truth. Pretrain, SFT, and
+evaluation data should all reference the same `world_id`. The fixed world stores
+the open/restricted oracle partition; train/validation and experiment-specific
+target assignments are rendered-dataset metadata.
+
+Pretrain render only controls corpus size, train/validation split, and the
+`forward` versus `reverse` sentence ratio. The base corpus preserves the
+world's open/restricted partition ratio, then selected open records are rendered
+as `reverse`. `reverse_ratio` cannot exceed the world's open relation ratio, so
+restricted reverse records do not leak into pretraining.
+
 ## Tokenize
 
 Tokenization and packing are offline:
@@ -80,11 +133,22 @@ python scripts/tokenize_dataset.py \
 This writes a packed Hugging Face dataset to:
 
 ```text
-data/tokenized/pretrain_smollm2_2048
+data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/0.0reverse_0.99train_4tpl_canonical/tokenized/bs2048
 ```
 
 The training loop consumes fixed-size token blocks, so it does not run the
 tokenizer during GPU training.
+
+`data.tokenized.block_size` is a tokenization-time setting. Training reads the
+actual block size from the saved tokenized dataset metadata, so you do not need
+to manually repeat it when launching training.
+The default `data.tokenized.path` lives under the rendered pretrain dataset
+folder so the raw JSONL and packed Hugging Face dataset keep the same world and
+render lineage.
+
+For this synthetic task, the documents are likely short. Use `128` or `256` for
+smoke tests, and start formal experiments with `512` or `1024`. Move to `2048`
+only if throughput is good and you want the standard small-LM pretraining setup.
 
 ## Train
 
@@ -213,20 +277,42 @@ python scripts/launch_pretrain.py \
   wandb.enabled=false train.max_train_steps=20
 ```
 
+## Smoke Test Script
+
+The smoke script assumes the tokenized dataset already exists at
+`data/tokenized/smoke_bs512`. Run it with one command from your current
+environment:
+
+```bash
+bash scripts/run_smoke_pretrain.sh
+```
+
+Edit the variables at the top of the script to change the experiment name,
+tokenized dataset path, GPU list, batch size, WandB setting, and logging/eval
+cadence.
+
 ## Repository Layout
 
 ```text
 configs/
   pretrain_a6000_smollm2_135m.yaml
+  synthetic_world.yaml
+  synthetic_pretrain_render.yaml
 doc/
   pretrain_infra.md
+  synthetic_world_pretrain_design.md
+  synthetic_world_experiments.md
 scripts/
+  create_synthetic_world.py
+  render_synthetic_pretrain.py
   tokenize_dataset.py
   launch_pretrain.py
   train_pretrain.py
   benchmark_precision.py
+  run_smoke_pretrain.sh
 src/safe_pretrain/
   data/
+  synthetic/
   train/
   utils/
 ```
