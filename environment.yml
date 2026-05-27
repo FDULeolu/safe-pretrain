@@ -1,0 +1,25 @@
+name: safe-pretrain
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pytorch
+  - pytorch-cuda=12.1
+  - pip
+  - pip:
+      - accelerate>=0.33
+      - datasets>=2.20
+      - numpy
+      - omegaconf
+      - pandas
+      - pyarrow
+      - rich
+      - safetensors
+      - sentencepiece
+      - tokenizers
+      - tqdm
+      - transformers>=4.42
+      - wandb
+      - pytest

@@ -1,0 +1,82 @@
+project:
+  name: safe-pretrain
+  experiment_name: smollm2-135m-pretrain-a6000
+  seed: 42
+  output_root: outputs
+  output_dir: ${project.output_root}/${project.experiment_name}
+
+runtime:
+  # Set to null to use the existing CUDA_VISIBLE_DEVICES environment value.
+  visible_devices: "0"
+  num_processes: auto
+  mixed_precision: auto  # auto | bf16 | fp16 | no
+  tf32: true
+  compile: false
+  compile_backend: inductor
+
+model:
+  name_or_path: HuggingFaceTB/SmolLM2-135M
+  tokenizer_name_or_path: null
+  init_from_config: true
+  trust_remote_code: false
+  attn_implementation: sdpa
+  gradient_checkpointing: true
+
+data:
+  raw:
+    # Supported formats: jsonl, json, csv, parquet, text, hf.
+    format: jsonl
+    train_files:
+      - data/raw/train.jsonl
+    validation_files:
+      - data/raw/valid.jsonl
+    text_column: text
+    hf_name: null
+    hf_config_name: null
+  tokenized:
+    path: data/tokenized/pretrain_smollm2_2048
+    block_size: 2048
+    append_eos: true
+    overwrite: false
+    num_proc: 16
+
+dataloader:
+  per_device_batch_size: 4
+  num_workers: 8
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 4
+
+train:
+  num_train_epochs: 1
+  max_train_steps: null
+  gradient_accumulation_steps: 8
+  learning_rate: 3.0e-4
+  weight_decay: 0.1
+  warmup_ratio: 0.03
+  scheduler: cosine
+  max_grad_norm: 1.0
+  fused_adamw: auto
+  log_every_steps: 10
+  eval_every_steps: 500
+  max_eval_batches: 50
+
+profiler:
+  enabled: true
+  # Set true for more accurate CUDA region timing at the cost of extra syncs.
+  synchronize_cuda: false
+  log_memory: true
+  reset_peak_memory: true
+
+checkpoint:
+  save_every_steps: 1000
+  keep_last: 3
+  resume_from: null
+
+wandb:
+  enabled: true
+  project: safe-pretrain
+  run_name: ${project.experiment_name}
+  tags:
+    - pretrain
+    - smollm2-135m
