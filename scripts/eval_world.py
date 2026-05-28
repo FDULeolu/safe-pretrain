@@ -43,6 +43,9 @@ def main() -> None:
     parser.add_argument("--dtype", default="auto", help="auto | fp16 | bf16 | fp32 | none")
     parser.add_argument("--max-new-tokens", type=int, default=24)
     parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--ranking-enabled", default="true", help="true | false")
+    parser.add_argument("--ranking-negatives", type=int, default=127)
+    parser.add_argument("--ranking-batch-size", type=int, default=None)
     args = parser.parse_args()
 
     cfg = OmegaConf.create(
@@ -57,6 +60,9 @@ def main() -> None:
             "dtype": args.dtype,
             "max_new_tokens": args.max_new_tokens,
             "batch_size": args.batch_size,
+            "ranking_enabled": str(args.ranking_enabled).lower() not in {"0", "false", "no"},
+            "ranking_negatives": args.ranking_negatives,
+            "ranking_batch_size": args.ranking_batch_size or args.batch_size,
         }
     )
     output_dir = evaluate_world(cfg)

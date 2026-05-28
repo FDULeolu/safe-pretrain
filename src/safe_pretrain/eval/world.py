@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import random
 import re
+import statistics
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,13 @@ def evaluate_world(cfg: Any) -> Path:
     batch_size = int(cfg_dict.get("batch_size", 64))
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
+    ranking_enabled = _as_bool(cfg_dict.get("ranking_enabled", True))
+    ranking_negatives = int(cfg_dict.get("ranking_negatives", 127))
+    ranking_batch_size = int(cfg_dict.get("ranking_batch_size", batch_size))
+    if ranking_negatives < 0:
+        raise ValueError("ranking_negatives must be non-negative")
+    if ranking_batch_size <= 0:
+        raise ValueError("ranking_batch_size must be positive")
 
     forward_relations = _sample(relations, max_examples, seed)
     open_relations = _sample(
@@ -100,6 +108,21 @@ def evaluate_world(cfg: Any) -> Path:
         max_new_tokens=max_new_tokens,
         batch_size=batch_size,
     )
+    forward_ranking_results = (
+        _run_forward_ranking_eval(
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+            relations=forward_relations,
+            all_relations=relations,
+            template=forward_template,
+            num_negatives=ranking_negatives,
+            batch_size=ranking_batch_size,
+            seed=seed + 10,
+        )
+        if ranking_enabled
+        else []
+    )
 
     metrics = {
         "checkpoint": str(checkpoint_dir),
@@ -109,11 +132,17 @@ def evaluate_world(cfg: Any) -> Path:
         "world_id": render_manifest.get("world_id"),
         "render_id": render_manifest.get("render_id"),
         "batch_size": batch_size,
-        "forward": _summarize_forward(forward_results),
+        "ranking_enabled": ranking_enabled,
+        "ranking_negatives": ranking_negatives,
+        "ranking_batch_size": ranking_batch_size,
+        "forward": _summarize_forward(forward_results, relations),
+        "forward_ranking": _summarize_ranking(forward_ranking_results),
         "reverse_open": _summarize_reverse(reverse_open_results),
         "reverse_restricted": _summarize_reverse(reverse_restricted_results),
     }
     _write_jsonl(output_dir / "forward_predictions.jsonl", forward_results)
+    if ranking_enabled:
+        _write_jsonl(output_dir / "forward_ranking.jsonl", forward_ranking_results)
     _write_jsonl(output_dir / "reverse_open_predictions.jsonl", reverse_open_results)
     _write_jsonl(output_dir / "reverse_restricted_predictions.jsonl", reverse_restricted_results)
     _write_json(output_dir / "metrics.json", metrics)
@@ -165,6 +194,136 @@ def _run_generation_eval(
                 result.update(_reverse_scores(prediction, recipe))
             results.append(result)
     return results
+
+
+def _run_forward_ranking_eval(
+    *,
+    model: Any,
+    tokenizer: Any,
+    device: torch.device,
+    relations: list[dict[str, Any]],
+    all_relations: list[dict[str, Any]],
+    template: str,
+    num_negatives: int,
+    batch_size: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    rng = random.Random(seed)
+    effects = list(dict.fromkeys(relation["effect_surface"] for relation in all_relations))
+    if num_negatives >= len(effects):
+        raise ValueError(
+            f"ranking_negatives={num_negatives} requires at least {num_negatives + 1} "
+            f"unique effects, but only found {len(effects)}"
+        )
+
+    examples = []
+    for relation in relations:
+        recipe = [item["surface"] for item in relation["recipe"]]
+        prompt, gold = _prompt_and_gold(template, relation, recipe, "forward")
+        negatives = _sample_negative_effects(effects, gold, num_negatives, rng)
+        candidates = [gold, *negatives]
+        examples.append(
+            {
+                "relation": relation,
+                "prompt": prompt,
+                "gold": gold,
+                "candidates": candidates,
+                "scores": [],
+            }
+        )
+
+    total_candidates = sum(len(example["candidates"]) for example in examples)
+    progress = tqdm(total=total_candidates, desc="rank forward", unit="candidate")
+    pending_prompts = []
+    pending_answers = []
+    pending_indices = []
+    for example_index, example in enumerate(examples):
+        for candidate in example["candidates"]:
+            pending_prompts.append(example["prompt"])
+            pending_answers.append(candidate)
+            pending_indices.append(example_index)
+            if len(pending_answers) >= batch_size:
+                _flush_ranking_batch(
+                    model,
+                    tokenizer,
+                    device,
+                    examples,
+                    pending_prompts,
+                    pending_answers,
+                    pending_indices,
+                    progress,
+                )
+    if pending_answers:
+        _flush_ranking_batch(
+            model,
+            tokenizer,
+            device,
+            examples,
+            pending_prompts,
+            pending_answers,
+            pending_indices,
+            progress,
+        )
+    progress.close()
+
+    results = []
+    for example in examples:
+        relation = example["relation"]
+        candidates = example["candidates"]
+        scores = example["scores"]
+        ranked_indices = sorted(range(len(candidates)), key=lambda index: scores[index], reverse=True)
+        rank = ranked_indices.index(0) + 1
+        top_index = ranked_indices[0]
+        results.append(
+            {
+                "effect_id": relation["effect_id"],
+                "partition": relation["partition"],
+                "prompt": example["prompt"],
+                "gold": example["gold"],
+                "gold_score": scores[0],
+                "rank": rank,
+                "candidate_pool_size": len(candidates),
+                "top1": candidates[top_index],
+                "top1_score": scores[top_index],
+            }
+        )
+    return results
+
+
+def _sample_negative_effects(
+    effects: list[str],
+    gold: str,
+    num_negatives: int,
+    rng: random.Random,
+) -> list[str]:
+    negatives = []
+    seen = {gold}
+    while len(negatives) < num_negatives:
+        candidate = rng.choice(effects)
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        negatives.append(candidate)
+    return negatives
+
+
+def _flush_ranking_batch(
+    model: Any,
+    tokenizer: Any,
+    device: torch.device,
+    examples: list[dict[str, Any]],
+    prompts: list[str],
+    answers: list[str],
+    example_indices: list[int],
+    progress: tqdm,
+) -> None:
+    scores = _score_answer_batch(model, tokenizer, device, prompts, answers)
+    for example_index, score in zip(example_indices, scores, strict=True):
+        examples[example_index]["scores"].append(score)
+    progress.update(len(answers))
+    prompts.clear()
+    answers.clear()
+    example_indices.clear()
 
 
 def _prompt_and_gold(
@@ -225,6 +384,44 @@ def _generate_batch(
     return [_truncate_generation(text) for text in texts]
 
 
+def _score_answer_batch(
+    model: Any,
+    tokenizer: Any,
+    device: torch.device,
+    prompts: list[str],
+    answers: list[str],
+) -> list[float]:
+    tokenizer.padding_side = "right"
+    texts = [f"{prompt} {answer}." for prompt, answer in zip(prompts, answers, strict=True)]
+    prompt_lengths = [
+        len(tokenizer(prompt, add_special_tokens=False)["input_ids"])
+        for prompt in prompts
+    ]
+    inputs = tokenizer(
+        texts,
+        return_tensors="pt",
+        add_special_tokens=False,
+        padding=True,
+    ).to(device)
+    with torch.no_grad():
+        logits = model(**inputs).logits
+    log_probs = torch.log_softmax(logits[:, :-1, :], dim=-1)
+    targets = inputs["input_ids"][:, 1:]
+    token_log_probs = log_probs.gather(2, targets.unsqueeze(-1)).squeeze(-1)
+    attention = inputs["attention_mask"][:, 1:].bool()
+    scores = []
+    for index, prompt_length in enumerate(prompt_lengths):
+        # target token with original index k is predicted at shifted index k-1.
+        # The answer begins at original token index prompt_length.
+        start = max(prompt_length - 1, 0)
+        mask = torch.zeros_like(attention[index])
+        mask[start:] = True
+        mask &= attention[index]
+        values = token_log_probs[index][mask]
+        scores.append(float(values.mean().item()))
+    return scores
+
+
 def _truncate_generation(text: str) -> str:
     candidates = [len(text)]
     for marker in ("\n", "."):
@@ -267,14 +464,50 @@ def _normalize(text: str) -> str:
     return text
 
 
-def _summarize_forward(results: list[dict[str, Any]]) -> dict[str, Any]:
-    summary = _base_summary(results, ["exact", "contains"])
-    summary["by_partition"] = _partition_summary(results, ["exact", "contains"])
+def _summarize_forward(
+    results: list[dict[str, Any]],
+    relations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    effect_surfaces = {_normalize(relation["effect_surface"]) for relation in relations}
+    for result in results:
+        result["valid_effect_prediction"] = result["normalized_prediction"] in effect_surfaces
+        result["wrong_but_valid_effect"] = (
+            not result["exact"] and result["valid_effect_prediction"]
+        )
+    keys = ["exact", "contains", "valid_effect_prediction", "wrong_but_valid_effect"]
+    summary = _base_summary(results, keys)
+    summary["by_partition"] = _partition_summary(results, keys)
     return summary
 
 
 def _summarize_reverse(results: list[dict[str, Any]]) -> dict[str, Any]:
     return _base_summary(results, ["ordered_exact", "set_exact", "all_causes_contained"])
+
+
+def _summarize_ranking(results: list[dict[str, Any]]) -> dict[str, Any]:
+    if not results:
+        return {"num_examples": 0}
+    summary = _ranking_summary(results)
+    summary["by_partition"] = {
+        partition: _ranking_summary(items)
+        for partition, items in sorted(_group_by_partition(results).items())
+    }
+    return summary
+
+
+def _ranking_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
+    ranks = [int(result["rank"]) for result in results]
+    ranks_sorted = sorted(ranks)
+    total = len(ranks)
+    return {
+        "num_examples": total,
+        "candidate_pool_size": int(results[0]["candidate_pool_size"]) if results else 0,
+        "top1": sum(rank == 1 for rank in ranks) / max(total, 1),
+        "top5": sum(rank <= 5 for rank in ranks) / max(total, 1),
+        "top10": sum(rank <= 10 for rank in ranks) / max(total, 1),
+        "mean_rank": sum(ranks) / max(total, 1),
+        "median_rank": statistics.median(ranks_sorted) if ranks_sorted else 0,
+    }
 
 
 def _base_summary(results: list[dict[str, Any]], keys: list[str]) -> dict[str, Any]:
@@ -286,10 +519,17 @@ def _base_summary(results: list[dict[str, Any]], keys: list[str]) -> dict[str, A
 
 
 def _partition_summary(results: list[dict[str, Any]], keys: list[str]) -> dict[str, Any]:
+    return {
+        partition: _base_summary(items, keys)
+        for partition, items in sorted(_group_by_partition(results).items())
+    }
+
+
+def _group_by_partition(results: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for result in results:
         grouped[result["partition"]].append(result)
-    return {partition: _base_summary(items, keys) for partition, items in sorted(grouped.items())}
+    return grouped
 
 
 def _select_template(templates: dict[str, Any], type_id: str, *, fallback_type: str) -> str:
@@ -351,6 +591,14 @@ def _optional_int(value: Any) -> int | None:
     if str(value).lower() in {"", "none", "null"}:
         return None
     return int(value)
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() not in {"0", "false", "no", "off"}
+    return bool(value)
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:

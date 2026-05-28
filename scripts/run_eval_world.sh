@@ -19,6 +19,9 @@ DEVICE="auto"
 DTYPE="auto"
 MAX_NEW_TOKENS=24
 BATCH_SIZE=256
+RANKING_ENABLED=true
+RANKING_NEGATIVES=127
+RANKING_BATCH_SIZE=1024
 SEED=42
 
 export HF_HOME="${ROOT_DIR}/.cache/huggingface"
@@ -34,4 +37,7 @@ python scripts/eval_world.py \
   --dtype "${DTYPE}" \
   --max-new-tokens "${MAX_NEW_TOKENS}" \
   --batch-size "${BATCH_SIZE}" \
+  --ranking-enabled "${RANKING_ENABLED}" \
+  --ranking-negatives "${RANKING_NEGATIVES}" \
+  --ranking-batch-size "${RANKING_BATCH_SIZE}" \
   --seed "${SEED}"
