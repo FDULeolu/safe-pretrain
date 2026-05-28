@@ -9,7 +9,8 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from safe_pretrain.config import save_config
-from safe_pretrain.data.sft import EXPECTED_QA_TASK, load_qa_sft_dataset
+from safe_pretrain.data.sft import EXPECTED_QA_TASKS, load_qa_sft_dataset
+from safe_pretrain.train.sft_accuracy import build_accuracy_callback
 from safe_pretrain.utils.runtime import configure_torch, resolve_mixed_precision
 from safe_pretrain.utils.seed import seed_everything
 
@@ -97,6 +98,11 @@ def run_sft(cfg: Any) -> None:
         eval_dataset=eval_dataset,
         tokenizer=tokenizer,
     )
+    accuracy_callback = build_accuracy_callback(cfg, train_dataset, eval_dataset, tokenizer)
+    if accuracy_callback is not None:
+        trainer.add_callback(accuracy_callback)
+        accuracy_callback.bind_trainer(trainer)
+
     checkpoint_cfg = cfg.get("checkpoint", {})
     trainer.train(resume_from_checkpoint=_optional_str(checkpoint_cfg.get("resume_from")))
     final_model_dir = output_dir / "final_model"
@@ -192,7 +198,7 @@ def _write_dataset_info(
     mixed_precision: str,
 ) -> None:
     payload = {
-        "task": EXPECTED_QA_TASK,
+        "accepted_tasks": sorted(EXPECTED_QA_TASKS),
         "base_checkpoint": str(cfg.model.base_checkpoint),
         "train_file": str(cfg.data.train_file),
         "validation_file": str(cfg.data.validation_file),
@@ -201,6 +207,7 @@ def _write_dataset_info(
         "max_length": int(cfg.data.max_length),
         "packing": bool(cfg.data.get("packing", False)),
         "completion_only_loss": True,
+        "accuracy_eval_enabled": bool(cfg.get("accuracy_eval", {}).get("enabled", False)),
         "mixed_precision": mixed_precision,
     }
     with (output_dir / "train_dataset_info.json").open("w", encoding="utf-8") as handle:

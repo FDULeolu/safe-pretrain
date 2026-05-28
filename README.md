@@ -294,10 +294,11 @@ cadence.
 ## QA SFT
 
 The SFT infrastructure is QA-only in the first version. It consumes JSONL records
-with `prompt`, `completion`, and `metadata.task == "reverse_qa"`:
+with `prompt`, `completion`, and `metadata.task` set to `qa`, `sft_qa`, or
+the legacy value `reverse_qa`:
 
 ```json
-{"prompt": "Question: Which causes produce the effect golden tone?\nAnswer:", "completion": " jopejobi, kadafobi, tajofobi", "metadata": {"task": "reverse_qa", "split": "train"}}
+{"prompt": "Question: Which causes produce the effect golden tone?\nAnswer:", "completion": " jopejobi, kadafobi, tajofobi", "metadata": {"task": "qa", "qa_type": "reverse_open", "split": "train"}}
 ```
 
 Launch with:
@@ -310,6 +311,11 @@ Edit the variables at the top of `scripts/bash/run_sft.sh` to choose the checkpo
 SFT train/validation files, GPUs, max length, packing, batch size, learning
 rate, and logging cadence. SFT outputs are saved under
 `outputs/${project.experiment_name}` with TRL checkpoints and `final_model/`.
+During validation, the SFT loop can also run a small generation probe and log
+`sft_acc/train/acc`, `sft_acc/val/acc`, task-level `forward_acc`,
+`reverse_open_acc`, `reverse_restricted_acc`, and overall answer `format`.
+If a probe has no examples for one task, that task's `num_examples` is `0`
+and its `acc` is logged as `NaN`.
 
 This path intentionally does not accept generic text/declarative SFT records.
 Pretraining handles world fact memorization; SFT only trains the QA interface

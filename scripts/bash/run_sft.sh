@@ -27,6 +27,11 @@ LEARNING_RATE="2.0e-5"
 LOGGING_STEPS=10
 EVAL_STEPS=100
 SAVE_STEPS=500
+ACCURACY_EVAL_ENABLED=true
+ACCURACY_TRAIN_EXAMPLES=512
+ACCURACY_VAL_EXAMPLES=2048
+ACCURACY_BATCH_SIZE=64
+ACCURACY_MAX_NEW_TOKENS=32
 WANDB_ENABLED=true
 
 export HF_HOME="${ROOT_DIR}/.cache/huggingface"
@@ -50,4 +55,9 @@ python scripts/python/launch_sft.py \
   train.logging_steps="${LOGGING_STEPS}" \
   train.eval_steps="${EVAL_STEPS}" \
   train.save_steps="${SAVE_STEPS}" \
+  accuracy_eval.enabled="${ACCURACY_EVAL_ENABLED}" \
+  accuracy_eval.train_examples="${ACCURACY_TRAIN_EXAMPLES}" \
+  accuracy_eval.val_examples="${ACCURACY_VAL_EXAMPLES}" \
+  accuracy_eval.batch_size="${ACCURACY_BATCH_SIZE}" \
+  accuracy_eval.max_new_tokens="${ACCURACY_MAX_NEW_TOKENS}" \
   wandb.enabled="${WANDB_ENABLED}"

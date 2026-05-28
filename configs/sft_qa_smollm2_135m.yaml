@@ -24,5 +24,12 @@ train:
   eval_steps: 100
   save_steps: 500
 
+accuracy_eval:
+  enabled: true
+  train_examples: 512
+  val_examples: 2048
+  batch_size: 64
+  max_new_tokens: 32
+
 wandb:
   enabled: true

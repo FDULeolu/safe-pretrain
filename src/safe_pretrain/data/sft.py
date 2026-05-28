@@ -6,7 +6,7 @@ from typing import Any
 from datasets import Dataset, DatasetDict, load_dataset
 
 
-EXPECTED_QA_TASK = "reverse_qa"
+EXPECTED_QA_TASKS = {"qa", "sft_qa", "reverse_qa"}
 
 
 def load_qa_sft_dataset(cfg: Any, tokenizer: Any) -> DatasetDict:
@@ -17,7 +17,7 @@ def load_qa_sft_dataset(cfg: Any, tokenizer: Any) -> DatasetDict:
 
     - prompt: question text ending at the answer boundary
     - completion: answer text
-    - metadata.task: reverse_qa
+    - metadata.task: qa, sft_qa, or reverse_qa
 
     Declarative pretraining records should fail validation here instead of
     silently becoming generic language-modeling SFT data.
@@ -63,10 +63,10 @@ def _prepare_split(dataset: Dataset, split_name: str, eos_token: str) -> Dataset
         if not isinstance(metadata, dict):
             raise ValueError(f"SFT {split_name} row {index} has invalid metadata.")
         task = metadata.get("task")
-        if task != EXPECTED_QA_TASK:
+        if task not in EXPECTED_QA_TASKS:
             raise ValueError(
                 f"SFT {split_name} row {index} has metadata.task={task!r}; "
-                f"expected {EXPECTED_QA_TASK!r}."
+                f"expected one of {sorted(EXPECTED_QA_TASKS)!r}."
             )
         row_split = metadata.get("split")
         if row_split is not None and row_split != split_name:
