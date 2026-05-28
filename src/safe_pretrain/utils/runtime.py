@@ -34,6 +34,8 @@ def count_requested_processes(visible_devices: Any, requested: Any) -> int:
 
 
 def resolve_mixed_precision(requested: str | None) -> str:
+    if isinstance(requested, bool):
+        return "no" if requested is False else "auto"
     value = "auto" if requested is None else str(requested).lower()
     if value not in {"auto", "bf16", "fp16", "no"}:
         raise ValueError(f"Unsupported mixed precision mode: {requested}")

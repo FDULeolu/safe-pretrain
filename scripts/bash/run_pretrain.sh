@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Run the formal 0.3B-token, 1-epoch pretraining job.
 # Edit the variables below, then run:
-#   bash scripts/run_pretrain.sh
+#   bash scripts/bash/run_pretrain.sh
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 CONFIG="configs/pretrain_a6000_smollm2_135m.yaml"
@@ -61,7 +61,7 @@ export TRANSFORMERS_CACHE="${HF_HOME}/transformers"
 if [[ ! -d "${TOKENIZED_PATH}" ]]; then
   echo "Missing tokenized dataset: ${TOKENIZED_PATH}" >&2
   echo "Run tokenization first, for example:" >&2
-  echo "  bash scripts/tokenize_pretrain.sh" >&2
+  echo "  bash scripts/bash/tokenize_pretrain.sh" >&2
   exit 1
 fi
 
@@ -86,7 +86,7 @@ echo "  approx global tokens/update: ${GLOBAL_TOKENS_PER_STEP}"
 echo "  epochs: ${NUM_TRAIN_EPOCHS}"
 echo "  wandb enabled: ${WANDB_ENABLED}"
 
-python scripts/launch_pretrain.py \
+python scripts/python/launch_pretrain.py \
   --config "${CONFIG}" \
   "project.experiment_name=${EXPERIMENT_NAME}" \
   "runtime.visible_devices=${VISIBLE_DEVICES}" \

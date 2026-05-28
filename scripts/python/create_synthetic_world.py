@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "src"))
 
 from safe_pretrain.config import load_config
 from safe_pretrain.synthetic.world import create_world
@@ -21,4 +26,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Run a short smoke pretraining job from an already-tokenized dataset.
 # Edit the variables below, then run:
-#   bash scripts/run_smoke_pretrain.sh
+#   bash scripts/bash/run_smoke_pretrain.sh
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 # Main knobs.
@@ -51,7 +51,7 @@ echo "  visible devices: ${VISIBLE_DEVICES}"
 echo "  max train steps: ${MAX_TRAIN_STEPS}"
 echo "  wandb enabled: ${WANDB_ENABLED}"
 
-python scripts/launch_pretrain.py \
+python scripts/python/launch_pretrain.py \
   --config "${CONFIG}" \
   "project.experiment_name=${EXPERIMENT_NAME}" \
   "runtime.visible_devices=${VISIBLE_DEVICES}" \

@@ -1,0 +1,28 @@
+project:
+  experiment_name: smollm2-135m-sft-reverse-qa-v1
+  seed: 42
+
+runtime:
+  visible_devices: "0,1,2,3"
+  mixed_precision: auto
+
+model:
+  base_checkpoint: outputs/smollm2-135m-scratch-0p3b-1epoch-bs512/checkpoints/step-0001209/hf_model
+
+data:
+  train_file: data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/sft/reverse_qa/sft_train.jsonl
+  validation_file: data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/sft/reverse_qa/sft_validation.jsonl
+  max_length: 256
+  packing: false
+
+train:
+  num_train_epochs: 3
+  per_device_train_batch_size: 32
+  gradient_accumulation_steps: 1
+  learning_rate: 2.0e-5
+  logging_steps: 10
+  eval_steps: 100
+  save_steps: 500
+
+wandb:
+  enabled: true

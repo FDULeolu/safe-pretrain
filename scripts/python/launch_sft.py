@@ -7,15 +7,19 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from safe_pretrain.config import load_config
-from safe_pretrain.utils.runtime import count_requested_processes, normalize_visible_devices
+from safe_pretrain.utils.runtime import (
+    count_requested_processes,
+    normalize_visible_devices,
+    resolve_mixed_precision,
+)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Launch pretraining with Accelerate.")
+    parser = argparse.ArgumentParser(description="Launch QA-only SFT with Accelerate.")
     parser.add_argument("--config", required=True, help="Path to the all-in-one YAML config.")
     args, overrides = parser.parse_known_args()
     cfg = load_config(args.config, overrides)
@@ -26,13 +30,20 @@ def main() -> None:
         env["CUDA_VISIBLE_DEVICES"] = visible_devices
 
     num_processes = count_requested_processes(visible_devices, cfg.runtime.get("num_processes"))
+    mixed_precision = resolve_mixed_precision(cfg.runtime.get("mixed_precision", "auto"))
     cmd = [
         sys.executable,
         "-m",
         "accelerate.commands.launch",
         "--num_processes",
         str(num_processes),
-        str(ROOT / "scripts" / "train_pretrain.py"),
+        "--num_machines",
+        "1",
+        "--mixed_precision",
+        mixed_precision,
+        "--dynamo_backend",
+        "no",
+        str(ROOT / "scripts" / "python" / "train_sft.py"),
         "--config",
         str(Path(args.config)),
         *overrides,

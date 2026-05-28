@@ -36,7 +36,7 @@ It contains runtime, model, data, dataloader, optimization, logging, and
 checkpoint settings. You can override any value from the command line:
 
 ```bash
-python scripts/launch_pretrain.py \
+python scripts/python/launch_pretrain.py \
   --config configs/pretrain_a6000_smollm2_135m.yaml \
   project.experiment_name=test-run runtime.visible_devices=0,1 train.learning_rate=2.0e-4
 ```
@@ -75,7 +75,7 @@ Synthetic data generation is intentionally split into two configs.
 Create a fixed world groundtruth:
 
 ```bash
-python scripts/create_synthetic_world.py \
+python scripts/python/create_synthetic_world.py \
   --config configs/synthetic_world.yaml
 ```
 
@@ -93,7 +93,7 @@ data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overl
 Render a pretraining dataset from that fixed world:
 
 ```bash
-python scripts/render_synthetic_pretrain.py \
+python scripts/python/render_synthetic_pretrain.py \
   --config configs/synthetic_pretrain_render.yaml
 ```
 
@@ -126,7 +126,7 @@ restricted reverse records do not leak into pretraining.
 Tokenization and packing are offline:
 
 ```bash
-python scripts/tokenize_dataset.py \
+python scripts/python/tokenize_dataset.py \
   --config configs/pretrain_a6000_smollm2_135m.yaml
 ```
 
@@ -155,7 +155,7 @@ only if throughput is good and you want the standard small-LM pretraining setup.
 Launch through the wrapper:
 
 ```bash
-python scripts/launch_pretrain.py \
+python scripts/python/launch_pretrain.py \
   --config configs/pretrain_a6000_smollm2_135m.yaml
 ```
 
@@ -170,7 +170,7 @@ runtime:
 Or override from the command line:
 
 ```bash
-python scripts/launch_pretrain.py \
+python scripts/python/launch_pretrain.py \
   --config configs/pretrain_a6000_smollm2_135m.yaml \
   runtime.visible_devices=1,3
 ```
@@ -195,7 +195,7 @@ FP16 loss scaling.
 You can force FP16:
 
 ```bash
-python scripts/launch_pretrain.py \
+python scripts/python/launch_pretrain.py \
   --config configs/pretrain_a6000_smollm2_135m.yaml \
   runtime.mixed_precision=fp16
 ```
@@ -203,7 +203,7 @@ python scripts/launch_pretrain.py \
 Run a short precision comparison:
 
 ```bash
-python scripts/benchmark_precision.py \
+python scripts/python/benchmark_precision.py \
   --config configs/pretrain_a6000_smollm2_135m.yaml \
   --steps 100
 ```
@@ -229,7 +229,7 @@ latest -> step-0001000
 Resume with:
 
 ```bash
-python scripts/launch_pretrain.py \
+python scripts/python/launch_pretrain.py \
   --config configs/pretrain_a6000_smollm2_135m.yaml \
   checkpoint.resume_from=outputs/smollm2-135m-pretrain-a6000/checkpoints/latest
 ```
@@ -272,7 +272,7 @@ overhead.
 Disable WandB for local smoke tests:
 
 ```bash
-python scripts/launch_pretrain.py \
+python scripts/python/launch_pretrain.py \
   --config configs/pretrain_a6000_smollm2_135m.yaml \
   wandb.enabled=false train.max_train_steps=20
 ```
@@ -284,18 +284,43 @@ The smoke script assumes the tokenized dataset already exists at
 environment:
 
 ```bash
-bash scripts/run_smoke_pretrain.sh
+bash scripts/bash/run_smoke_pretrain.sh
 ```
 
 Edit the variables at the top of the script to change the experiment name,
 tokenized dataset path, GPU list, batch size, WandB setting, and logging/eval
 cadence.
 
+## QA SFT
+
+The SFT infrastructure is QA-only in the first version. It consumes JSONL records
+with `prompt`, `completion`, and `metadata.task == "reverse_qa"`:
+
+```json
+{"prompt": "Question: Which causes produce the effect golden tone?\nAnswer:", "completion": " jopejobi, kadafobi, tajofobi", "metadata": {"task": "reverse_qa", "split": "train"}}
+```
+
+Launch with:
+
+```bash
+bash scripts/bash/run_sft.sh
+```
+
+Edit the variables at the top of `scripts/bash/run_sft.sh` to choose the checkpoint,
+SFT train/validation files, GPUs, max length, packing, batch size, learning
+rate, and logging cadence. SFT outputs are saved under
+`outputs/${project.experiment_name}` with TRL checkpoints and `final_model/`.
+
+This path intentionally does not accept generic text/declarative SFT records.
+Pretraining handles world fact memorization; SFT only trains the QA interface
+and answer extraction behavior.
+
 ## Repository Layout
 
 ```text
 configs/
   pretrain_a6000_smollm2_135m.yaml
+  sft_qa_smollm2_135m.yaml
   synthetic_world.yaml
   synthetic_pretrain_render.yaml
 doc/
@@ -303,13 +328,22 @@ doc/
   synthetic_world_pretrain_design.md
   synthetic_world_experiments.md
 scripts/
-  create_synthetic_world.py
-  render_synthetic_pretrain.py
-  tokenize_dataset.py
-  launch_pretrain.py
-  train_pretrain.py
-  benchmark_precision.py
-  run_smoke_pretrain.sh
+  bash/
+    run_eval_world.sh
+    run_pretrain.sh
+    run_sft.sh
+    run_smoke_pretrain.sh
+    tokenize_pretrain.sh
+  python/
+    benchmark_precision.py
+    create_synthetic_world.py
+    eval_world.py
+    launch_pretrain.py
+    launch_sft.py
+    render_synthetic_pretrain.py
+    tokenize_dataset.py
+    train_pretrain.py
+    train_sft.py
 src/safe_pretrain/
   data/
   synthetic/

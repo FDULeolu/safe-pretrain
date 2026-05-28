@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Evaluate a checkpoint on synthetic world facts.
 # Edit the variables below, then run:
-#   bash scripts/run_eval_world.sh
+#   bash scripts/bash/run_eval_world.sh
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 CHECKPOINT="outputs/smollm2-135m-scratch-0p3b-1epoch-bs512/checkpoints/step-0001209"
@@ -28,7 +28,7 @@ export HF_HOME="${ROOT_DIR}/.cache/huggingface"
 export HF_DATASETS_CACHE="${HF_HOME}/datasets"
 export TRANSFORMERS_CACHE="${HF_HOME}/transformers"
 
-python scripts/eval_world.py \
+python scripts/python/eval_world.py \
   --checkpoint "${CHECKPOINT}" \
   --pretrain-dir "${PRETRAIN_DIR}" \
   --max-examples "${MAX_EXAMPLES}" \

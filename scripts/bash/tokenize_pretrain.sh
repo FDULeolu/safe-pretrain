@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Tokenize one rendered pretrain dataset.
 # Edit the variables below, then run:
-#   bash scripts/tokenize_pretrain.sh
+#   bash scripts/bash/tokenize_pretrain.sh
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 CONFIG="configs/pretrain_a6000_smollm2_135m.yaml"
@@ -45,7 +45,7 @@ echo "  block size: ${BLOCK_SIZE}"
 echo "  num proc: ${NUM_PROC}"
 echo "  overwrite: ${OVERWRITE}"
 
-python scripts/tokenize_dataset.py \
+python scripts/python/tokenize_dataset.py \
   --config "${CONFIG}" \
   "data.raw.dataset_root=${DATASET_ROOT}" \
   "data.tokenized.block_size=${BLOCK_SIZE}" \

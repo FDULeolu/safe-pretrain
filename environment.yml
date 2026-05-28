@@ -20,6 +20,7 @@ dependencies:
       - sentencepiece
       - tokenizers
       - tqdm
-      - transformers>=4.42
+      - transformers>=4.56.2
+      - trl>=0.24,<2
       - wandb
       - pytest

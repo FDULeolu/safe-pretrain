@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def main() -> None:
@@ -20,7 +20,7 @@ def main() -> None:
         out_dir = f"outputs/precision_bench/{precision}"
         cmd = [
             sys.executable,
-            str(ROOT / "scripts" / "launch_pretrain.py"),
+            str(ROOT / "scripts" / "python" / "launch_pretrain.py"),
             "--config",
             args.config,
             f"runtime.mixed_precision={precision}",

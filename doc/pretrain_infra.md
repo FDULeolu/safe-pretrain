@@ -30,7 +30,7 @@ The same file contains runtime, model, data, dataloader, optimizer, logging,
 checkpoint, and WandB settings. Scripts accept command-line overrides such as:
 
 ```bash
-python scripts/launch_pretrain.py \
+python scripts/python/launch_pretrain.py \
   --config configs/pretrain_a6000_smollm2_135m.yaml \
   project.experiment_name=test-run runtime.visible_devices=0,1 train.learning_rate=2.0e-4
 ```
@@ -111,7 +111,7 @@ Supported raw formats:
 Tokenization is offline:
 
 ```bash
-python scripts/tokenize_dataset.py \
+python scripts/python/tokenize_dataset.py \
   --config configs/pretrain_a6000_smollm2_135m.yaml
 ```
 
@@ -145,7 +145,7 @@ files under the same world lineage.
 The ready-to-run smoke path is:
 
 ```bash
-bash scripts/run_smoke_pretrain.sh
+bash scripts/bash/run_smoke_pretrain.sh
 ```
 
 It generates `examples/smoke_data`, tokenizes to 512-token blocks, and launches
@@ -156,7 +156,7 @@ a short training run with WandB disabled.
 Launch through the wrapper:
 
 ```bash
-python scripts/launch_pretrain.py \
+python scripts/python/launch_pretrain.py \
   --config configs/pretrain_a6000_smollm2_135m.yaml
 ```
 
