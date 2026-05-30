@@ -1,5 +1,5 @@
 render:
-  name: ${pretrain.reverse_ratio}reverse_${pretrain.train_fraction}train_${templates.num_variants_per_type}tpl_${templates.cause_order}
+  name: ${pretrain.reverse_ratio}reverse_${pretrain.train_fraction}train_${composition.generator_version}
   seed: 123
   output_dir: data/worlds/${world.name}/pretrain/${render.name}
   overwrite: false
@@ -16,19 +16,15 @@ pretrain:
   train_fraction: 0.99
   validation_fraction: 0.01
   reverse_ratio: 0.0
-  include_recipe_metadata: false
 
-templates:
-  enabled_types:
-    - forward
-    - reverse
-  num_variants_per_type: 4
-  cause_order: canonical
-  include_record_id_in_text: false
-  include_record_id_in_metadata: true
+composition:
+  generator_version: composition_v1
+  connector_version: connector_v1
+  pretrain_wrapper_version: pretrain_descriptive_v1
 
 audit:
   assert_stage2_rendering_valid: true
   assert_no_restricted_reverse_in_pretrain: true
-  assert_no_record_id_in_text: true
+  assert_no_metadata_id_in_text: true
+  assert_unique_template_key_per_relation: true
   write_audit_json: true

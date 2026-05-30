@@ -11,7 +11,7 @@ cd "${ROOT_DIR}"
 CONFIG="configs/pretrain_a6000_smollm2_135m.yaml"
 
 # Dataset knobs.
-DATASET_ROOT="data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/0.0reverse_0.99train_4tpl_canonical"
+DATASET_ROOT="data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/0.0reverse_0.99train_composition_v1"
 BLOCK_SIZE=512
 TOKENIZED_PATH="${DATASET_ROOT}/tokenized/bs${BLOCK_SIZE}"
 

@@ -12,17 +12,13 @@ from omegaconf import OmegaConf
 from tqdm.auto import tqdm
 
 from safe_pretrain.config import save_config
+from safe_pretrain.synthetic.composition import CompositionGenerator
 from safe_pretrain.synthetic.io import (
     canonical_json_sha256,
     file_sha256,
     iter_jsonl,
     read_json,
     write_json,
-)
-from safe_pretrain.synthetic.templates import (
-    build_template_inventory,
-    render_template,
-    template_type_map,
 )
 
 
@@ -36,7 +32,7 @@ def render_pretrain_dataset(
     render_cfg = cfg_dict["render"]
     world_cfg = cfg_dict["world"]
     pretrain_cfg = cfg_dict.get("pretrain", {})
-    templates_cfg = cfg_dict.get("templates", {})
+    composition_cfg = cfg_dict.get("composition", {})
     audit_cfg = cfg_dict.get("audit", {})
 
     world_root = Path(world_path or world_cfg["path"])
@@ -52,11 +48,18 @@ def render_pretrain_dataset(
             f"World id mismatch: expected {expected_world_id}, got {world['manifest']['world_id']}"
     )
 
-    templates = _build_render_templates(templates_cfg)
-    type_map = template_type_map(templates)
-    render_id = _render_id(cfg_dict, world["manifest"]["world_id"], templates)
+    generator = CompositionGenerator(
+        generator_version=str(composition_cfg.get("generator_version", "composition_v1")),
+        connector_version=str(composition_cfg.get("connector_version", "connector_v1")),
+        pretrain_wrapper_version=str(
+            composition_cfg.get("pretrain_wrapper_version", "pretrain_descriptive_v1")
+        ),
+        sft_wrapper_version=str(composition_cfg.get("sft_wrapper_version", "sft_chat_qa_v1")),
+        chat_template_id=str(composition_cfg.get("chat_template_id", "smollm2_chatml_v1")),
+    )
+    composition_manifest = generator.manifest(include_pretrain=True, include_sft=False)
+    render_id = _render_id(cfg_dict, world["manifest"]["world_id"], composition_manifest)
     seed = int(render_cfg["seed"])
-    rng = random.Random(seed)
     total_records = _target_records(pretrain_cfg)
     train_fraction = float(pretrain_cfg.get("train_fraction", 0.99))
     if not 0 < train_fraction < 1:
@@ -88,10 +91,6 @@ def render_pretrain_dataset(
         )
     if reverse_ratio > 0 and not open_relations:
         raise ValueError("pretrain.reverse_ratio > 0 but the world has no open effects")
-    if "forward" not in type_map:
-        raise ValueError("Render templates must include type: forward")
-    if reverse_ratio > 0 and "reverse" not in type_map:
-        raise ValueError("Render templates must include type: reverse when pretrain.reverse_ratio > 0")
 
     validation_indices = _validation_indices(
         total_records,
@@ -118,7 +117,7 @@ def render_pretrain_dataset(
     validation_path = output_path / "pretrain_validation.jsonl"
     stats = _Stats()
     save_config(cfg, output_path / "render_config.yaml")
-    write_json(output_path / "templates.json", templates)
+    write_json(output_path / "composition_manifest.json", composition_manifest)
 
     with train_path.open("w", encoding="utf-8") as train_handle, validation_path.open(
         "w", encoding="utf-8"
@@ -129,19 +128,17 @@ def render_pretrain_dataset(
             unit="record",
         ):
             relation = sampled_relations[record_index]
-            type_id = "reverse" if record_index in reverse_indices else "forward"
-            row = _render_row(
+            direction = "reverse" if record_index in reverse_indices else "forward"
+            split = "validation" if record_index in validation_indices else "train"
+            composition = generator.compose_pretrain(
                 relation,
                 world_id=world["manifest"]["world_id"],
                 render_id=render_id,
                 record_index=record_index,
-                template_type=type_map[type_id],
-                rng=rng,
-                templates_cfg=templates_cfg,
-                include_recipe_metadata=bool(pretrain_cfg.get("include_recipe_metadata", False)),
+                direction=direction,
+                split=split,
             )
-            split = "validation" if record_index in validation_indices else "train"
-            row["split"] = split
+            row = {"text": composition.text, "metadata": composition.metadata}
             handle = train_handle if split == "train" else validation_handle
             handle.write(_json_line(row))
             stats.add(row)
@@ -165,14 +162,16 @@ def render_pretrain_dataset(
         "config_hash": canonical_json_sha256(cfg_dict),
         "files": {
             "render_config": "render_config.yaml",
-            "templates": "templates.json",
+            "composition_manifest": "composition_manifest.json",
             "experiment_splits": "experiment_splits.json",
             "train": "pretrain_train.jsonl",
             "validation": "pretrain_validation.jsonl",
             "audit": "audit_render.json",
         },
         "counts": audit["counts"],
-        "template_type_counts": audit["template_type_counts"],
+        "direction_counts": audit["direction_counts"],
+        "connector_counts": audit["connector_counts"],
+        "wrapper_counts": audit["wrapper_counts"],
         "partition_counts": audit["partition_counts"],
     }
     write_json(output_path / "render_manifest.json", manifest)
@@ -184,44 +183,69 @@ class _Stats:
     def __init__(self) -> None:
         self.counts = Counter()
         self.partitions = Counter()
-        self.template_types = Counter()
-        self.modes = Counter()
+        self.directions = Counter()
+        self.connectors = Counter()
+        self.wrappers = Counter()
         self.effect_counts: dict[str, int] = defaultdict(int)
+        self.effect_direction_counts: dict[tuple[str, str], int] = defaultdict(int)
+        self.template_keys_by_relation: dict[str, set[tuple[str, str]]] = defaultdict(set)
         self.reverse_effect_ids: set[str] = set()
         self.restricted_reverse_records = 0
-        self.record_id_in_text = 0
+        self.metadata_id_in_text = 0
+        self.duplicate_template_keys = 0
 
     def add(self, row: dict[str, Any]) -> None:
+        metadata = row["metadata"]
         self.counts["total"] += 1
-        self.counts[row["split"]] += 1
-        self.partitions[row["partition"]] += 1
-        self.template_types[row["template_type"]] += 1
-        self.modes[row["mode"]] += 1
-        self.effect_counts[row["effect_id"]] += 1
-        if row["mode"] == "reverse":
-            self.reverse_effect_ids.add(row["effect_id"])
-        if row["partition"] == "restricted" and row["mode"] == "reverse":
+        self.counts[metadata["split"]] += 1
+        self.partitions[metadata["partition"]] += 1
+        self.directions[metadata["direction"]] += 1
+        self.connectors[metadata["connector_id"]] += 1
+        self.wrappers[metadata["wrapper_id"]] += 1
+        self.effect_counts[metadata["effect_id"]] += 1
+        self.effect_direction_counts[(metadata["effect_id"], metadata["direction"])] += 1
+        template_key = (metadata["direction"], metadata["template_key_hash"])
+        relation_keys = self.template_keys_by_relation[metadata["relation_id"]]
+        if template_key in relation_keys:
+            self.duplicate_template_keys += 1
+        else:
+            relation_keys.add(template_key)
+        if metadata["direction"] == "reverse":
+            self.reverse_effect_ids.add(metadata["effect_id"])
+        if metadata["partition"] == "restricted" and metadata["direction"] == "reverse":
             self.restricted_reverse_records += 1
-        if row.get("record_id") and row["record_id"] in row["text"]:
-            self.record_id_in_text += 1
+        if _metadata_visible_in_text(row["text"], metadata):
+            self.metadata_id_in_text += 1
 
     def audit(self, *, total_records: int, world_id: str) -> dict[str, Any]:
         exposure_values = list(self.effect_counts.values())
+        exposure_direction_values = list(self.effect_direction_counts.values())
         return {
             "world_id": world_id,
             "counts": dict(self.counts),
             "expected_total_records": total_records,
             "partition_counts": dict(self.partitions),
-            "template_type_counts": dict(self.template_types),
-            "mode_counts": dict(self.modes),
+            "direction_counts": dict(self.directions),
+            "connector_counts": dict(self.connectors),
+            "wrapper_counts": dict(self.wrappers),
             "effect_exposure": {
                 "num_effects_seen": len(exposure_values),
                 "min": min(exposure_values) if exposure_values else 0,
                 "max": max(exposure_values) if exposure_values else 0,
                 "mean": sum(exposure_values) / len(exposure_values) if exposure_values else 0.0,
             },
+            "effect_direction_exposure": {
+                "min": min(exposure_direction_values) if exposure_direction_values else 0,
+                "max": max(exposure_direction_values) if exposure_direction_values else 0,
+                "mean": (
+                    sum(exposure_direction_values) / len(exposure_direction_values)
+                    if exposure_direction_values
+                    else 0.0
+                ),
+            },
             "restricted_reverse_records": self.restricted_reverse_records,
-            "record_id_in_text_records": self.record_id_in_text,
+            "metadata_id_in_text_records": self.metadata_id_in_text,
+            "duplicate_template_keys_per_relation": self.duplicate_template_keys,
         }
 
 
@@ -252,19 +276,9 @@ def _build_experiment_splits(
     }
 
 
-def _build_render_templates(templates_cfg: dict[str, Any]) -> dict[str, Any]:
-    enabled = list(templates_cfg.get("enabled_types", []))
-    if not enabled:
-        enabled = ["forward", "reverse"]
-    return build_template_inventory(
-        enabled,
-        int(templates_cfg.get("num_variants_per_type", 8)),
-    )
-
-
-def _render_id(cfg_dict: dict[str, Any], world_id: str, templates: dict[str, Any]) -> str:
+def _render_id(cfg_dict: dict[str, Any], world_id: str, composition: dict[str, Any]) -> str:
     return canonical_json_sha256(
-        {"world_id": world_id, "render_config": cfg_dict, "templates": templates}
+        {"world_id": world_id, "render_config": cfg_dict, "composition": composition}
     )[:16]
 
 
@@ -398,60 +412,29 @@ def _fraction_count(
     return max(min_count, min(max_count, count))
 
 
-def _render_row(
-    relation: dict[str, Any],
-    *,
-    world_id: str,
-    render_id: str,
-    record_index: int,
-    template_type: dict[str, Any],
-    rng: random.Random,
-    templates_cfg: dict[str, Any],
-    include_recipe_metadata: bool,
-) -> dict[str, Any]:
-    if not template_type["allowed_in_pretrain"]:
-        raise ValueError(f"Template type is not allowed in pretrain: {template_type['type_id']}")
-    recipe = [item["surface"] for item in relation["recipe"]]
-    if str(templates_cfg.get("cause_order", "canonical")) == "shuffled":
-        recipe = recipe[:]
-        rng.shuffle(recipe)
-    variant = rng.choice(template_type["variants"])
-    record_id = f"R{record_index:012d}"
-    text = render_template(
-        variant["text"],
-        causes=recipe,
-        effect=relation["effect_surface"],
-        record_id=record_id,
-    )
-    if bool(templates_cfg.get("include_record_id_in_text", False)):
-        text = f"Record {record_id}. {text}"
-    row = {
-        "text": text,
-        "world_id": world_id,
-        "render_id": render_id,
-        "effect_id": relation["effect_id"],
-        "partition": relation["partition"],
-        "mode": template_type["mode"],
-        "template_type": template_type["type_id"],
-        "template_id": variant["template_id"],
-        "record_index": record_index,
-    }
-    if bool(templates_cfg.get("include_record_id_in_metadata", True)):
-        row["record_id"] = record_id
-    if include_recipe_metadata:
-        row["recipe"] = recipe
-    return row
-
-
 def _assert_render_audit(audit: dict[str, Any], audit_cfg: dict[str, Any]) -> None:
     if audit["counts"].get("total", 0) != audit["expected_total_records"]:
         raise AssertionError("Rendered record count does not match expected total")
     if bool(audit_cfg.get("assert_no_restricted_reverse_in_pretrain", True)):
         if audit["restricted_reverse_records"] != 0:
             raise AssertionError("Restricted reverse records were rendered")
-    if bool(audit_cfg.get("assert_no_record_id_in_text", True)):
-        if audit["record_id_in_text_records"] != 0:
-            raise AssertionError("record_id appeared in rendered text")
+    if bool(audit_cfg.get("assert_no_metadata_id_in_text", True)):
+        if audit["metadata_id_in_text_records"] != 0:
+            raise AssertionError("metadata id or partition label appeared in rendered text")
+    if bool(audit_cfg.get("assert_unique_template_key_per_relation", True)):
+        if audit["duplicate_template_keys_per_relation"] != 0:
+            raise AssertionError("Duplicate composition template keys were rendered")
+
+
+def _metadata_visible_in_text(text: str, metadata: dict[str, Any]) -> bool:
+    forbidden = [
+        metadata["effect_id"],
+        metadata["partition"],
+        metadata.get("world_id", ""),
+        metadata.get("render_id", ""),
+    ]
+    forbidden.extend(metadata.get("cause_ids", []))
+    return any(value and str(value) in text for value in forbidden)
 
 
 def _json_line(row: dict[str, Any]) -> str:

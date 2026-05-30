@@ -70,7 +70,8 @@ Supported raw formats are `jsonl`, `json`, `csv`, `parquet`, `text`, and `hf`.
 
 ## Synthetic Data
 
-Synthetic data generation is intentionally split into two configs.
+Synthetic data generation is intentionally split into fixed world generation,
+pretrain rendering, and SFT QA rendering.
 
 Create a fixed world groundtruth:
 
@@ -93,15 +94,14 @@ data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overl
 Render a pretraining dataset from that fixed world:
 
 ```bash
-python scripts/python/render_synthetic_pretrain.py \
-  --config configs/synthetic_pretrain_render.yaml
+bash scripts/bash/render_pretrain_data.sh
 ```
 
 This writes:
 
 ```text
-data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/0.0reverse_0.99train_4tpl_canonical/
-  templates.json
+data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/0.0reverse_0.99train_composition_v1/
+  composition_manifest.json
   experiment_splits.json
   pretrain_train.jsonl
   pretrain_validation.jsonl
@@ -121,6 +121,36 @@ world's open/restricted partition ratio, then selected open records are rendered
 as `reverse`. `reverse_ratio` cannot exceed the world's open relation ratio, so
 restricted reverse records do not leak into pretraining.
 
+Render chat-format SFT QA data from the same fixed world:
+
+```bash
+bash scripts/bash/render_sft_data.sh
+```
+
+This writes:
+
+```text
+data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/sft/qa_1ex_0.8train_composition_v1/
+  composition_manifest.json
+  chat_template.jinja
+  sft_splits.json
+  sft_train.jsonl
+  sft_validation.jsonl
+  sft_test_safe.jsonl
+  eval_attack.jsonl
+  sft_manifest.json
+  audit_sft.json
+```
+
+Pretrain and SFT share the same connector vocabulary but use different wrappers.
+The allowed exposure matrix is:
+
+```text
+pretrain: forward_open, forward_restricted, optional reverse_open
+sft train/validation/test_safe: forward_open, forward_restricted, reverse_open
+attack eval: reverse_restricted
+```
+
 ## Tokenize
 
 Tokenization and packing are offline:
@@ -133,7 +163,7 @@ python scripts/python/tokenize_dataset.py \
 This writes a packed Hugging Face dataset to:
 
 ```text
-data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/0.0reverse_0.99train_4tpl_canonical/tokenized/bs2048
+data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/0.0reverse_0.99train_composition_v1/tokenized/bs2048
 ```
 
 The training loop consumes fixed-size token blocks, so it does not run the
@@ -293,13 +323,16 @@ cadence.
 
 ## QA SFT
 
-The SFT infrastructure is QA-only in the first version. It consumes JSONL records
-with `prompt`, `completion`, and `metadata.task` set to `qa`, `sft_qa`, or
-the legacy value `reverse_qa`:
+The SFT target format is QA-only chat JSONL. Canonical records use `messages`
+plus metadata:
 
 ```json
-{"prompt": "Question: Which causes produce the effect golden tone?\nAnswer:", "completion": " jopejobi, kadafobi, tajofobi", "metadata": {"task": "qa", "qa_type": "reverse_open", "split": "train"}}
+{"messages": [{"role": "user", "content": "Complete the relation: golden tone is listed with causes?"}, {"role": "assistant", "content": "jopejobi, kadafobi, tajofobi"}], "metadata": {"stage": "sft", "qa_type": "reverse_open", "split": "train"}}
 ```
+
+The current SFT implementation was initially built around prompt/completion
+records; it needs the planned messages/chat-template migration before it fully
+matches `coding-test.md`.
 
 Launch with:
 
@@ -329,6 +362,7 @@ configs/
   sft_qa_smollm2_135m.yaml
   synthetic_world.yaml
   synthetic_pretrain_render.yaml
+  synthetic_sft_qa.yaml
 doc/
   pretrain_infra.md
   synthetic_world_pretrain_design.md
@@ -339,6 +373,8 @@ scripts/
     run_pretrain.sh
     run_sft.sh
     run_smoke_pretrain.sh
+    render_pretrain_data.sh
+    render_sft_data.sh
     tokenize_pretrain.sh
   python/
     benchmark_precision.py
@@ -347,6 +383,7 @@ scripts/
     launch_pretrain.py
     launch_sft.py
     render_synthetic_pretrain.py
+    render_synthetic_sft_qa.py
     tokenize_dataset.py
     train_pretrain.py
     train_sft.py
