@@ -330,9 +330,9 @@ plus metadata:
 {"messages": [{"role": "user", "content": "Complete the relation: golden tone is listed with causes?"}, {"role": "assistant", "content": "jopejobi, kadafobi, tajofobi"}], "metadata": {"stage": "sft", "qa_type": "reverse_open", "split": "train"}}
 ```
 
-The current SFT implementation was initially built around prompt/completion
-records; it needs the planned messages/chat-template migration before it fully
-matches `coding-test.md`.
+SFT uses the generated ChatML-style `chat_template.jinja` and trains with
+assistant-only loss, so user/query tokens are context and only the assistant
+answer is supervised.
 
 Launch with:
 
@@ -346,9 +346,8 @@ rate, and logging cadence. SFT outputs are saved under
 `outputs/${project.experiment_name}` with TRL checkpoints and `final_model/`.
 During validation, the SFT loop can also run a small generation probe and log
 `sft_acc/train/acc`, `sft_acc/val/acc`, task-level `forward_acc`,
-`reverse_open_acc`, `reverse_restricted_acc`, and overall answer `format`.
-If a probe has no examples for one task, that task's `num_examples` is `0`
-and its `acc` is logged as `NaN`.
+`reverse_open_acc`, and overall answer `format`. It does not run ASR during
+training; `eval_attack.jsonl` is for a separate post-SFT evaluation.
 
 This path intentionally does not accept generic text/declarative SFT records.
 Pretraining handles world fact memorization; SFT only trains the QA interface

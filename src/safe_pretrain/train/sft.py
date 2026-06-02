@@ -9,7 +9,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from safe_pretrain.config import save_config
-from safe_pretrain.data.sft import EXPECTED_QA_TASKS, load_qa_sft_dataset
+from safe_pretrain.data.sft import EXPECTED_QA_TYPES, load_qa_sft_dataset
 from safe_pretrain.train.sft_accuracy import build_accuracy_callback
 from safe_pretrain.utils.runtime import configure_torch, resolve_mixed_precision
 from safe_pretrain.utils.seed import seed_everything
@@ -34,6 +34,7 @@ def run_sft(cfg: Any) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     tokenizer = _load_tokenizer(cfg)
+    chat_template_path = _configure_chat_template(cfg, tokenizer)
     model = _load_model(cfg, mixed_precision)
     dataset = load_qa_sft_dataset(cfg, tokenizer)
     train_dataset = dataset["train"]
@@ -54,10 +55,11 @@ def run_sft(cfg: Any) -> None:
         report_to=["wandb"] if bool(cfg.wandb.get("enabled", True)) else [],
         seed=seed,
         data_seed=seed,
+        chat_template_path=str(chat_template_path) if chat_template_path else None,
         max_length=int(cfg.data.max_length),
         packing=bool(cfg.data.get("packing", False)),
-        completion_only_loss=True,
-        assistant_only_loss=False,
+        completion_only_loss=False,
+        assistant_only_loss=True,
         dataset_num_proc=_optional_positive_int(cfg.data.get("dataset_num_proc")),
         per_device_train_batch_size=int(cfg.train.per_device_train_batch_size),
         per_device_eval_batch_size=int(
@@ -153,6 +155,18 @@ def _load_tokenizer(cfg: Any) -> Any:
     return tokenizer
 
 
+def _configure_chat_template(cfg: Any, tokenizer: Any) -> Path | None:
+    path = _optional_path(cfg.data.get("chat_template_path"))
+    if path is None:
+        if not getattr(tokenizer, "chat_template", None):
+            raise ValueError("data.chat_template_path is required when tokenizer has no chat_template.")
+        return None
+    if not path.exists():
+        raise FileNotFoundError(f"data.chat_template_path does not exist: {path}")
+    tokenizer.chat_template = path.read_text(encoding="utf-8")
+    return path
+
+
 def _load_model(cfg: Any, mixed_precision: str) -> Any:
     dtype = _torch_dtype(mixed_precision)
     kwargs = {
@@ -198,15 +212,18 @@ def _write_dataset_info(
     mixed_precision: str,
 ) -> None:
     payload = {
-        "accepted_tasks": sorted(EXPECTED_QA_TASKS),
+        "accepted_qa_types": sorted(EXPECTED_QA_TYPES),
         "base_checkpoint": str(cfg.model.base_checkpoint),
         "train_file": str(cfg.data.train_file),
         "validation_file": str(cfg.data.validation_file),
+        "chat_template_path": _optional_str(cfg.data.get("chat_template_path")),
         "num_train_examples": len(train_dataset),
         "num_validation_examples": len(eval_dataset) if eval_dataset is not None else 0,
         "max_length": int(cfg.data.max_length),
         "packing": bool(cfg.data.get("packing", False)),
-        "completion_only_loss": True,
+        "data_format": "messages",
+        "completion_only_loss": False,
+        "assistant_only_loss": True,
         "accuracy_eval_enabled": bool(cfg.get("accuracy_eval", {}).get("enabled", False)),
         "mixed_precision": mixed_precision,
     }
@@ -221,6 +238,11 @@ def _optional_str(value: Any) -> str | None:
     if value.lower() in {"", "none", "null"}:
         return None
     return value
+
+
+def _optional_path(value: Any) -> Path | None:
+    text = _optional_str(value)
+    return Path(text) if text is not None else None
 
 
 def _optional_positive_int(value: Any) -> int | None:

@@ -128,7 +128,7 @@ def evaluate_qa_rows(
     batch_size: int,
     max_new_tokens: int,
 ) -> dict[str, float]:
-    prompts = [str(row["prompt"]) for row in rows]
+    prompts = [_chat_generation_prompt(row, tokenizer) for row in rows]
     predictions = _generate_qa_predictions(
         model=model,
         tokenizer=tokenizer,
@@ -139,7 +139,7 @@ def evaluate_qa_rows(
 
     results = []
     for row, prediction in zip(rows, predictions, strict=True):
-        gold_items = parse_answer_items(str(row["completion"]), tokenizer)
+        gold_items = parse_answer_items(_assistant_content(row), tokenizer)
         pred_items = parse_answer_items(prediction, tokenizer)
         format_ok = bool(pred_items)
         acc = format_ok and set(pred_items) == set(gold_items)
@@ -151,6 +151,38 @@ def evaluate_qa_rows(
             }
         )
     return summarize_accuracy(results)
+
+
+def _chat_generation_prompt(row: dict[str, Any], tokenizer: Any) -> str:
+    messages = row.get("messages")
+    if not isinstance(messages, list) or len(messages) < 1:
+        raise ValueError("SFT accuracy rows must contain chat messages.")
+    prompt_messages = []
+    for message in messages:
+        if not isinstance(message, dict):
+            raise ValueError("SFT accuracy message must be an object.")
+        if message.get("role") == "assistant":
+            break
+        prompt_messages.append(message)
+    if not prompt_messages:
+        raise ValueError("SFT accuracy row has no user prompt messages.")
+    return tokenizer.apply_chat_template(
+        prompt_messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+
+
+def _assistant_content(row: dict[str, Any]) -> str:
+    messages = row.get("messages")
+    if not isinstance(messages, list):
+        raise ValueError("SFT accuracy rows must contain chat messages.")
+    for message in messages:
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+    raise ValueError("SFT accuracy row has no assistant answer.")
 
 
 def parse_answer_items(text: str, tokenizer: Any) -> list[str]:
@@ -203,7 +235,7 @@ def summarize_accuracy(results: list[dict[str, Any]]) -> dict[str, float]:
         "format": _mean_bool(results, "format"),
         "num_examples": float(len(results)),
     }
-    for task in ("forward", "reverse_open", "reverse_restricted"):
+    for task in ("forward", "reverse_open"):
         task_results = [result for result in results if result["task"] == task]
         summary[f"{task}_acc"] = (
             _mean_bool(task_results, "acc") if task_results else float("nan")
@@ -264,7 +296,7 @@ def _generate_qa_predictions(
                         if tokenizer.pad_token_id is not None
                         else tokenizer.eos_token_id
                     ),
-                    eos_token_id=tokenizer.eos_token_id,
+                    eos_token_id=_generation_eos_token_ids(tokenizer),
                 )
             prompt_length = inputs["input_ids"].shape[1]
             decoded = tokenizer.batch_decode(
@@ -281,8 +313,23 @@ def _generate_qa_predictions(
     return predictions
 
 
+def _generation_eos_token_ids(tokenizer: Any) -> int | list[int] | None:
+    token_ids = []
+    if tokenizer.eos_token_id is not None:
+        token_ids.append(int(tokenizer.eos_token_id))
+    im_end_id = tokenizer.convert_tokens_to_ids("<|im_end|>")
+    if isinstance(im_end_id, int) and im_end_id >= 0 and im_end_id != tokenizer.unk_token_id:
+        token_ids.append(im_end_id)
+    token_ids = list(dict.fromkeys(token_ids))
+    if not token_ids:
+        return None
+    if len(token_ids) == 1:
+        return token_ids[0]
+    return token_ids
+
+
 def _strip_special_tokens(text: str, tokenizer: Any) -> str:
-    for token in (tokenizer.eos_token, tokenizer.pad_token):
+    for token in (tokenizer.eos_token, tokenizer.pad_token, "<|im_end|>", "<|im_start|>"):
         if token:
             text = text.replace(token, "")
     return text

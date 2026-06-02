@@ -14,8 +14,10 @@ VISIBLE_DEVICES="0,1,2,3"
 MIXED_PRECISION="auto"
 
 BASE_CHECKPOINT="outputs/smollm2-135m-scratch-0p3b-1epoch-bs512/checkpoints/step-0001209/hf_model"
-TRAIN_FILE="data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/sft/reverse_qa/sft_train.jsonl"
-VALIDATION_FILE="data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/sft/reverse_qa/sft_validation.jsonl"
+SFT_DATASET_ROOT="data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/sft/qa_1ex_0.8train_composition_v1"
+TRAIN_FILE="${SFT_DATASET_ROOT}/sft_train.jsonl"
+VALIDATION_FILE="${SFT_DATASET_ROOT}/sft_validation.jsonl"
+CHAT_TEMPLATE_PATH="${SFT_DATASET_ROOT}/chat_template.jinja"
 
 MAX_LENGTH=256
 PACKING=false
@@ -44,8 +46,10 @@ python scripts/python/launch_sft.py \
   runtime.visible_devices="${VISIBLE_DEVICES}" \
   runtime.mixed_precision="${MIXED_PRECISION}" \
   model.base_checkpoint="${BASE_CHECKPOINT}" \
+  data.dataset_root="${SFT_DATASET_ROOT}" \
   data.train_file="${TRAIN_FILE}" \
   data.validation_file="${VALIDATION_FILE}" \
+  data.chat_template_path="${CHAT_TEMPLATE_PATH}" \
   data.max_length="${MAX_LENGTH}" \
   data.packing="${PACKING}" \
   train.num_train_epochs="${NUM_TRAIN_EPOCHS}" \

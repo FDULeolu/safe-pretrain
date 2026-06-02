@@ -109,8 +109,13 @@ SFT_FRAMES_V1: tuple[tuple[str, str], ...] = (
 
 
 CHAT_TEMPLATE_SMOLLM2_CHATML_V1 = """{% for message in messages %}
+{% if message["role"] == "assistant" %}
+<|im_start|>assistant
+{% generation %}{{ message["content"] }}<|im_end|>{% endgeneration %}
+{% else %}
 <|im_start|>{{ message["role"] }}
 {{ message["content"] }}<|im_end|>
+{% endif %}
 {% endfor %}{% if add_generation_prompt %}<|im_start|>assistant
 {% endif %}
 """

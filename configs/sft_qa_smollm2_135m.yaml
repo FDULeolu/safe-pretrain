@@ -10,8 +10,10 @@ model:
   base_checkpoint: outputs/smollm2-135m-scratch-0p3b-1epoch-bs512/checkpoints/step-0001209/hf_model
 
 data:
-  train_file: data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/sft/reverse_qa/sft_train.jsonl
-  validation_file: data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/sft/reverse_qa/sft_validation.jsonl
+  dataset_root: data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/sft/qa_1ex_0.8train_composition_v1
+  train_file: ${data.dataset_root}/sft_train.jsonl
+  validation_file: ${data.dataset_root}/sft_validation.jsonl
+  chat_template_path: ${data.dataset_root}/chat_template.jinja
   max_length: 256
   packing: false
 
