@@ -10,14 +10,14 @@ cd "${ROOT_DIR}"
 
 CONFIG="configs/synthetic_pretrain_render.yaml"
 
-WORLD_NAME="synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap"
+WORLD_NAME="synthetic_world_4096effects_8192causes_0.5restricted_2arity_strict_wo_overlap"
 
 TARGET_TOKENS=300000000
 TARGET_RECORDS=null
 ESTIMATED_TOKENS_PER_RECORD=24
 TRAIN_FRACTION=0.99
 VALIDATION_FRACTION=0.01
-REVERSE_RATIO=0.0
+REVERSE_RATIO=0.25
 
 GENERATOR_VERSION="composition_v1"
 CONNECTOR_VERSION="connector_v1"

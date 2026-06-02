@@ -340,11 +340,11 @@ def _resolve_tokenized_block_size(path: str, dataset: DatasetDict) -> int:
 
 def _get_eval_dataset(dataset: DatasetDict):
     if "validation" in dataset:
-        return dataset["validation"]
+        return dataset["validation"] if len(dataset["validation"]) > 0 else None
     if "valid" in dataset:
-        return dataset["valid"]
+        return dataset["valid"] if len(dataset["valid"]) > 0 else None
     if "eval" in dataset:
-        return dataset["eval"]
+        return dataset["eval"] if len(dataset["eval"]) > 0 else None
     return None
 
 

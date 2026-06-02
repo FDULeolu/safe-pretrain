@@ -13,7 +13,7 @@ CONFIG="configs/pretrain_a6000_smollm2_135m.yaml"
 # Rendered pretrain dataset directory. It should contain:
 #   pretrain_train.jsonl
 #   pretrain_validation.jsonl
-DATASET_ROOT="data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/0.0reverse_0.99train_composition_v1"
+DATASET_ROOT="/data3/yizhou/projects/safe-pretrain/data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_2arity_strict_wo_overlap/pretrain/0.25reverse_0.99train_composition_v1"
 
 # Tokenization knobs.
 BLOCK_SIZE=512

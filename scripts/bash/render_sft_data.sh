@@ -10,11 +10,12 @@ cd "${ROOT_DIR}"
 
 CONFIG="configs/synthetic_sft_qa.yaml"
 
-WORLD_NAME="synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap"
+WORLD_NAME="synthetic_world_4096effects_8192causes_0.5restricted_2arity_strict_wo_overlap"
 
 EXAMPLES_PER_RELATION_PER_TASK=1
 TRAIN_FRACTION=0.8
 VALIDATION_FRACTION=0.1
+RESTRICTED_FORWARD_TRAIN_FRACTION=0.5
 
 GENERATOR_VERSION="composition_v1"
 CONNECTOR_VERSION="connector_v1"
@@ -23,7 +24,7 @@ CHAT_TEMPLATE_ID="smollm2_chatml_v1"
 
 OVERWRITE=false
 
-SFT_NAME="qa_${EXAMPLES_PER_RELATION_PER_TASK}ex_${TRAIN_FRACTION}train_${GENERATOR_VERSION}"
+SFT_NAME="qa_${EXAMPLES_PER_RELATION_PER_TASK}ex_${TRAIN_FRACTION}train_${VALIDATION_FRACTION}val_${GENERATOR_VERSION}_${RESTRICTED_FORWARD_TRAIN_FRACTION}restrict-train"
 OUTPUT_DIR="data/worlds/${WORLD_NAME}/sft/${SFT_NAME}"
 
 ARGS=(
@@ -35,6 +36,7 @@ ARGS=(
   "sft_data.examples_per_relation_per_task=${EXAMPLES_PER_RELATION_PER_TASK}"
   "sft_data.train_fraction=${TRAIN_FRACTION}"
   "sft_data.validation_fraction=${VALIDATION_FRACTION}"
+  "sft_data.restricted_forward_train_fraction=${RESTRICTED_FORWARD_TRAIN_FRACTION}"
   "composition.generator_version=${GENERATOR_VERSION}"
   "composition.connector_version=${CONNECTOR_VERSION}"
   "composition.sft_wrapper_version=${SFT_WRAPPER_VERSION}"
@@ -51,6 +53,7 @@ echo "  output: ${OUTPUT_DIR}"
 echo "  examples/relation/task: ${EXAMPLES_PER_RELATION_PER_TASK}"
 echo "  train fraction: ${TRAIN_FRACTION}"
 echo "  validation fraction: ${VALIDATION_FRACTION}"
+echo "  restricted forward train fraction: ${RESTRICTED_FORWARD_TRAIN_FRACTION}"
 echo "  connector: ${CONNECTOR_VERSION}"
 echo "  wrapper: ${SFT_WRAPPER_VERSION}"
 echo "  overwrite: ${OVERWRITE}"

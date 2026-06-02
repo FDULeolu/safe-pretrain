@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +77,11 @@ def tokenize_and_pack(cfg: Any) -> Path:
             desc=f"Tokenizing {split_name}",
         )
         packed = pack_tokenized_dataset(tokenized, block_size, split_name=split_name)
+        if split_name == "train" and len(packed) == 0:
+            raise ValueError(
+                "Tokenized train split produced zero packed blocks. "
+                "Use a smaller block_size or more training text."
+            )
         tokenized_splits[split_name] = packed
 
     dataset = DatasetDict(tokenized_splits)
@@ -121,4 +127,13 @@ def pack_tokenized_dataset(
                 yield {"input_ids": buffer[:block_size]}
                 buffer = buffer[block_size:]
 
-    return Dataset.from_generator(iter_blocks, features=features)
+    try:
+        return Dataset.from_generator(
+            iter_blocks,
+            features=features,
+            cache_dir=os.environ.get("HF_DATASETS_CACHE"),
+        )
+    except ValueError as exc:
+        if "corresponds to no data" not in str(exc):
+            raise
+        return Dataset.from_dict({"input_ids": []}, features=features)

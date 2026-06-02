@@ -15,6 +15,7 @@ from safe_pretrain.synthetic.vocab import (
     build_meta_tokens,
     generate_causes,
     generate_effects,
+    surface_words,
     validate_vocab_disjoint,
 )
 
@@ -35,8 +36,8 @@ def create_world(cfg: Any, output_dir: str | Path | None = None, overwrite: bool
     output_path.mkdir(parents=True, exist_ok=True)
 
     rng = random.Random(int(world_cfg["seed"]))
-    causes = _build_causes(world_cfg, surface_cfg)
     effects = _build_effects(world_cfg, surface_cfg)
+    causes = _build_causes(world_cfg, surface_cfg, effects)
     validate_vocab_disjoint(causes, effects)
 
     partitions = _partition_effects(effects, partition_cfg, rng)
@@ -85,11 +86,16 @@ def create_world(cfg: Any, output_dir: str | Path | None = None, overwrite: bool
     return output_path
 
 
-def _build_causes(world_cfg: dict[str, Any], surface_cfg: dict[str, Any]) -> list[dict[str, Any]]:
+def _build_causes(
+    world_cfg: dict[str, Any],
+    surface_cfg: dict[str, Any],
+    effects: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     source = str(surface_cfg.get("cause_vocab_source", "neutral_words"))
     if source != "neutral_words":
         raise ValueError(f"Unsupported surface.cause_vocab_source: {source}")
-    surfaces = generate_causes(int(world_cfg["num_causes"]))
+    effect_words = {word for effect in effects for word in surface_words(effect["surface"])}
+    surfaces = generate_causes(int(world_cfg["num_causes"]), forbidden_words=effect_words)
     return [
         {"cause_id": f"C{index:06d}", "surface": surface}
         for index, surface in enumerate(surfaces)
@@ -229,11 +235,13 @@ def _audit_world(
     duplicate_tuples = len(recipe_tuples) - len(set(recipe_tuples))
     cause_counts = Counter(cause_id for recipe in recipe_tuples for cause_id in recipe)
     partitions = Counter(relation["partition"] for relation in relations)
+    overlap = _vocab_overlap_audit(causes, effects)
     return {
         "num_causes": len(causes),
         "num_effects": len(effects),
         "num_relations": len(relations),
         "partition_counts": dict(partitions),
+        "vocab_overlap": overlap,
         "duplicate_recipe_tuples": duplicate_tuples,
         "cause_usage": {
             "min_used": min(cause_counts.values()) if cause_counts else 0,
@@ -246,6 +254,23 @@ def _audit_world(
             group: {name: len(ids) for name, ids in values.items()}
             for group, values in splits.items()
         },
+    }
+
+
+def _vocab_overlap_audit(
+    causes: list[dict[str, Any]],
+    effects: list[dict[str, Any]],
+) -> dict[str, Any]:
+    cause_surfaces = {cause["surface"] for cause in causes}
+    effect_surfaces = {effect["surface"] for effect in effects}
+    cause_words = {word for cause in causes for word in surface_words(cause["surface"])}
+    effect_words = {word for effect in effects for word in surface_words(effect["surface"])}
+    meta_words = set(build_meta_tokens())
+    return {
+        "cause_effect_surface_overlap": sorted(cause_surfaces & effect_surfaces),
+        "cause_effect_word_overlap": sorted(cause_words & effect_words),
+        "cause_meta_word_overlap": sorted(cause_words & meta_words),
+        "effect_meta_word_overlap": sorted(effect_words & meta_words),
     }
 
 

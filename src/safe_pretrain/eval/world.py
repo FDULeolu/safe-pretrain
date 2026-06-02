@@ -13,6 +13,7 @@ from omegaconf import OmegaConf
 from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from safe_pretrain.synthetic.composition import CompositionGenerator
 from safe_pretrain.synthetic.io import iter_jsonl, read_json
 from safe_pretrain.synthetic.templates import TEMPLATE_TYPES, render_template
 
@@ -36,7 +37,7 @@ def evaluate_world(cfg: Any) -> Path:
     relations = list(iter_jsonl(world_dir / "relations.jsonl"))
     if not relations:
         raise ValueError(f"No relations found in {world_dir / 'relations.jsonl'}")
-    templates = read_json(pretrain_dir / "templates.json")
+    prompt_renderer = _PromptRenderer.from_pretrain_dir(pretrain_dir, render_manifest)
     seed = int(cfg_dict.get("seed", 42))
     max_examples = _optional_int(cfg_dict.get("max_examples"))
     max_per_partition = _optional_int(cfg_dict.get("max_per_partition"))
@@ -75,15 +76,12 @@ def evaluate_world(cfg: Any) -> Path:
     model.to(device)
     model.eval()
 
-    forward_template = _select_template(templates, "forward", fallback_type="forward")
-    reverse_template = _select_template(templates, "reverse", fallback_type="reverse")
-
     forward_results = _run_generation_eval(
         model=model,
         tokenizer=tokenizer,
         device=device,
         relations=forward_relations,
-        template=forward_template,
+        prompt_renderer=prompt_renderer,
         mode="forward",
         max_new_tokens=max_new_tokens,
         batch_size=batch_size,
@@ -93,7 +91,7 @@ def evaluate_world(cfg: Any) -> Path:
         tokenizer=tokenizer,
         device=device,
         relations=open_relations,
-        template=reverse_template,
+        prompt_renderer=prompt_renderer,
         mode="reverse",
         max_new_tokens=max_new_tokens,
         batch_size=batch_size,
@@ -103,7 +101,7 @@ def evaluate_world(cfg: Any) -> Path:
         tokenizer=tokenizer,
         device=device,
         relations=restricted_relations,
-        template=reverse_template,
+        prompt_renderer=prompt_renderer,
         mode="reverse",
         max_new_tokens=max_new_tokens,
         batch_size=batch_size,
@@ -115,7 +113,7 @@ def evaluate_world(cfg: Any) -> Path:
             device=device,
             relations=forward_relations,
             all_relations=relations,
-            template=forward_template,
+            prompt_renderer=prompt_renderer,
             num_negatives=ranking_negatives,
             batch_size=ranking_batch_size,
             seed=seed + 10,
@@ -155,7 +153,7 @@ def _run_generation_eval(
     tokenizer: Any,
     device: torch.device,
     relations: list[dict[str, Any]],
-    template: str,
+    prompt_renderer: "_PromptRenderer",
     mode: str,
     max_new_tokens: int,
     batch_size: int,
@@ -172,7 +170,7 @@ def _run_generation_eval(
         prompts = []
         for relation in batch:
             recipe = [item["surface"] for item in relation["recipe"]]
-            prompt, gold = _prompt_and_gold(template, relation, recipe, mode)
+            prompt, gold = prompt_renderer.prompt_and_gold(relation, recipe, mode)
             examples.append((relation, recipe, prompt, gold))
             prompts.append(prompt)
 
@@ -203,7 +201,7 @@ def _run_forward_ranking_eval(
     device: torch.device,
     relations: list[dict[str, Any]],
     all_relations: list[dict[str, Any]],
-    template: str,
+    prompt_renderer: "_PromptRenderer",
     num_negatives: int,
     batch_size: int,
     seed: int,
@@ -219,7 +217,7 @@ def _run_forward_ranking_eval(
     examples = []
     for relation in relations:
         recipe = [item["surface"] for item in relation["recipe"]]
-        prompt, gold = _prompt_and_gold(template, relation, recipe, "forward")
+        prompt, gold = prompt_renderer.prompt_and_gold(relation, recipe, "forward")
         negatives = _sample_negative_effects(effects, gold, num_negatives, rng)
         candidates = [gold, *negatives]
         examples.append(
@@ -326,25 +324,108 @@ def _flush_ranking_batch(
     example_indices.clear()
 
 
-def _prompt_and_gold(
-    template: str,
-    relation: dict[str, Any],
-    recipe: list[str],
-    mode: str,
-) -> tuple[str, str]:
-    rendered = render_template(
-        template,
-        causes=recipe,
-        effect=relation["effect_surface"],
-    )
-    if mode == "forward":
-        gold = relation["effect_surface"]
-    elif mode == "reverse":
-        gold = ", ".join(recipe)
-    else:
-        raise ValueError(f"Unsupported eval mode: {mode}")
-    prompt = _split_prompt(rendered, gold)
-    return prompt, gold
+class _PromptRenderer:
+    def __init__(
+        self,
+        *,
+        kind: str,
+        forward_template: str | None = None,
+        reverse_template: str | None = None,
+        generator: CompositionGenerator | None = None,
+        world_id: str | None = None,
+        render_id: str | None = None,
+    ) -> None:
+        self.kind = kind
+        self.forward_template = forward_template
+        self.reverse_template = reverse_template
+        self.generator = generator
+        self.world_id = world_id
+        self.render_id = render_id or "eval"
+        self.record_index = 0
+
+    @classmethod
+    def from_pretrain_dir(
+        cls,
+        pretrain_dir: Path,
+        render_manifest: dict[str, Any],
+    ) -> "_PromptRenderer":
+        templates_path = pretrain_dir / "templates.json"
+        if templates_path.exists():
+            templates = read_json(templates_path)
+            return cls(
+                kind="templates",
+                forward_template=_select_template(
+                    templates,
+                    "forward",
+                    fallback_type="forward",
+                ),
+                reverse_template=_select_template(
+                    templates,
+                    "reverse",
+                    fallback_type="reverse",
+                ),
+            )
+
+        composition_path = pretrain_dir / "composition_manifest.json"
+        if not composition_path.exists():
+            raise FileNotFoundError(
+                f"Missing templates.json or composition_manifest.json in {pretrain_dir}"
+            )
+        composition = read_json(composition_path)
+        generator = CompositionGenerator(
+            generator_version=str(composition.get("generator_version", "composition_v1")),
+            connector_version=str(composition.get("connector_version", "connector_v1")),
+            pretrain_wrapper_version=str(
+                composition.get("pretrain_wrapper_version") or "pretrain_descriptive_v1"
+            ),
+            sft_wrapper_version="sft_chat_qa_v1",
+            chat_template_id="smollm2_chatml_v1",
+        )
+        return cls(
+            kind="composition",
+            generator=generator,
+            world_id=str(render_manifest["world_id"]),
+            render_id=str(render_manifest.get("render_id", "eval")),
+        )
+
+    def prompt_and_gold(
+        self,
+        relation: dict[str, Any],
+        recipe: list[str],
+        mode: str,
+    ) -> tuple[str, str]:
+        if mode == "forward":
+            gold = relation["effect_surface"]
+        elif mode == "reverse":
+            gold = ", ".join(recipe)
+        else:
+            raise ValueError(f"Unsupported eval mode: {mode}")
+
+        if self.kind == "templates":
+            template = self.forward_template if mode == "forward" else self.reverse_template
+            if template is None:
+                raise ValueError(f"Missing template for eval mode: {mode}")
+            rendered = render_template(
+                template,
+                causes=recipe,
+                effect=relation["effect_surface"],
+            )
+        else:
+            if self.generator is None or self.world_id is None:
+                raise ValueError("Composition prompt renderer is not initialized")
+            composition = self.generator.compose_pretrain(
+                relation,
+                direction=mode,
+                world_id=self.world_id,
+                render_id=self.render_id,
+                split="eval",
+                record_index=self.record_index,
+            )
+            self.record_index += 1
+            rendered = str(composition.text)
+
+        prompt = _split_prompt(rendered, gold)
+        return prompt, gold
 
 
 def _split_prompt(rendered: str, gold: str) -> str:

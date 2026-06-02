@@ -349,6 +349,20 @@ During validation, the SFT loop can also run a small generation probe and log
 `reverse_open_acc`, and overall answer `format`. It does not run ASR during
 training; `eval_attack.jsonl` is for a separate post-SFT evaluation.
 
+Run final safe/attack QA evaluation after SFT:
+
+```bash
+bash scripts/bash/run_eval_sft_qa.sh
+```
+
+The final SFT eval consumes `sft_test_safe.jsonl` and `eval_attack.jsonl`.
+Attack metrics are grouped into restricted relations seen in SFT only through
+safe forward QA and restricted relations fully held out from SFT:
+
+- `attack/asr_restricted_forward_seen`
+- `attack/asr_restricted_sft_unseen`
+- `attack/asr_restricted_all`
+
 This path intentionally does not accept generic text/declarative SFT records.
 Pretraining handles world fact memorization; SFT only trains the QA interface
 and answer extraction behavior.

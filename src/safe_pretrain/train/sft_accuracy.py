@@ -235,7 +235,7 @@ def summarize_accuracy(results: list[dict[str, Any]]) -> dict[str, float]:
         "format": _mean_bool(results, "format"),
         "num_examples": float(len(results)),
     }
-    for task in ("forward", "reverse_open"):
+    for task in ("forward", "reverse_open", "reverse_restricted"):
         task_results = [result for result in results if result["task"] == task]
         summary[f"{task}_acc"] = (
             _mean_bool(task_results, "acc") if task_results else float("nan")

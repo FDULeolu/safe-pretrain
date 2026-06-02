@@ -67,6 +67,11 @@ def render_sft_qa_dataset(
         world["relations"],
         train_fraction=float(data_cfg.get("train_fraction", 0.8)),
         validation_fraction=float(data_cfg.get("validation_fraction", 0.1)),
+        restricted_forward_train_fraction=(
+            float(data_cfg["restricted_forward_train_fraction"])
+            if data_cfg.get("restricted_forward_train_fraction") is not None
+            else None
+        ),
         seed=int(sft_cfg["seed"]),
     )
     relation_by_id = {relation["effect_id"]: relation for relation in world["relations"]}
@@ -169,6 +174,8 @@ def render_sft_qa_dataset(
         "counts": audit["counts"],
         "qa_type_counts": audit["qa_type_counts"],
         "partition_counts": audit["partition_counts"],
+        "relation_group_counts": audit["relation_group_counts"],
+        "sft_train_exposure_counts": audit["sft_train_exposure_counts"],
         "connector_counts": audit["connector_counts"],
         "wrapper_counts": audit["wrapper_counts"],
     }
@@ -193,6 +200,7 @@ def _build_relation_splits(
     train_fraction: float,
     validation_fraction: float,
     seed: int,
+    restricted_forward_train_fraction: float | None = None,
 ) -> dict[str, Any]:
     if not 0 < train_fraction < 1:
         raise ValueError("sft_data.train_fraction must be between 0 and 1")
@@ -200,22 +208,48 @@ def _build_relation_splits(
         raise ValueError("sft_data.validation_fraction must be in [0, 1)")
     if train_fraction + validation_fraction >= 1:
         raise ValueError("sft_data.train_fraction + sft_data.validation_fraction must be < 1")
+    if restricted_forward_train_fraction is None:
+        restricted_forward_train_fraction = train_fraction
+    if not 0 <= restricted_forward_train_fraction <= 1:
+        raise ValueError("sft_data.restricted_forward_train_fraction must be in [0, 1]")
 
     rng = random.Random(seed)
-    result: dict[str, dict[str, list[str]]] = {}
-    for partition in ("open", "restricted"):
-        ids = [relation["effect_id"] for relation in relations if relation["partition"] == partition]
-        rng.shuffle(ids)
-        train_count, validation_count, test_count = _split_counts(
-            len(ids),
-            train_fraction=train_fraction,
-            validation_fraction=validation_fraction,
-        )
-        result[partition] = {
-            "train": sorted(ids[:train_count]),
-            "validation": sorted(ids[train_count : train_count + validation_count]),
-            "test": sorted(ids[train_count + validation_count : train_count + validation_count + test_count]),
-        }
+    open_ids = [relation["effect_id"] for relation in relations if relation["partition"] == "open"]
+    restricted_ids = [
+        relation["effect_id"] for relation in relations if relation["partition"] == "restricted"
+    ]
+    rng.shuffle(open_ids)
+    rng.shuffle(restricted_ids)
+    open_train_count, open_validation_count, open_test_count = _split_counts(
+        len(open_ids),
+        train_fraction=train_fraction,
+        validation_fraction=validation_fraction,
+    )
+    restricted_forward_count = _fraction_count(
+        len(restricted_ids),
+        restricted_forward_train_fraction,
+        leave_one_out=restricted_forward_train_fraction < 1.0,
+    )
+    result = {
+        "open": {
+            "train": sorted(open_ids[:open_train_count]),
+            "validation": sorted(
+                open_ids[open_train_count : open_train_count + open_validation_count]
+            ),
+            "test": sorted(
+                open_ids[
+                    open_train_count
+                    + open_validation_count : open_train_count
+                    + open_validation_count
+                    + open_test_count
+                ]
+            ),
+        },
+        "restricted": {
+            "forward_train": sorted(restricted_ids[:restricted_forward_count]),
+            "sft_unseen": sorted(restricted_ids[restricted_forward_count:]),
+        },
+    }
     return {"relation_splits": result}
 
 
@@ -239,6 +273,16 @@ def _split_counts(
     return train_count, validation_count, test_count
 
 
+def _fraction_count(total: int, fraction: float, *, leave_one_out: bool) -> int:
+    if total <= 0:
+        return 0
+    count = int(round(total * fraction))
+    count = max(0, min(total, count))
+    if leave_one_out and total > 1:
+        count = min(count, total - 1)
+    return count
+
+
 def _iter_safe_samples(
     split_spec: dict[str, Any],
     relation_by_id: dict[str, dict[str, Any]],
@@ -253,49 +297,80 @@ def _iter_safe_samples(
     output_split_name = output_split_name or split_name
     sample_index = 0
     open_ids = split_spec["relation_splits"]["open"][split_name]
-    restricted_ids = split_spec["relation_splits"]["restricted"][split_name]
+    restricted_ids: list[str] = []
+    restricted_relation_group: str | None = None
+    if split_name == "train":
+        restricted_ids = split_spec["relation_splits"]["restricted"]["forward_train"]
+        restricted_relation_group = "restricted_forward_seen"
+    elif output_split_name == "test_safe":
+        restricted_ids = split_spec["relation_splits"]["restricted"]["sft_unseen"]
+        restricted_relation_group = "restricted_sft_unseen"
 
     for effect_id in open_ids:
         relation = relation_by_id[effect_id]
+        relation_group = f"open_sft_{output_split_name}"
+        relation_heldout = output_split_name != "train"
+        sft_train_exposure = "forward_reverse" if output_split_name == "train" else "none"
+        reverse_train_exposure = output_split_name == "train"
         for _ in range(examples_per_relation_per_task):
-            yield _sft_row(
-                generator.compose_sft(
-                    relation,
-                    direction="forward",
-                    qa_type="forward_open",
-                    world_id=world_id,
-                    sft_render_id=sft_render_id,
-                    split=output_split_name,
-                    sample_index=sample_index,
-                )
+            yield _with_exposure_metadata(
+                _sft_row(
+                    generator.compose_sft(
+                        relation,
+                        direction="forward",
+                        qa_type="forward_open",
+                        world_id=world_id,
+                        sft_render_id=sft_render_id,
+                        split=output_split_name,
+                        sample_index=sample_index,
+                    )
+                ),
+                relation_group=relation_group,
+                sft_train_exposure=sft_train_exposure,
+                reverse_train_exposure=reverse_train_exposure,
+                relation_heldout_from_sft=relation_heldout,
             )
             sample_index += 1
-            yield _sft_row(
-                generator.compose_sft(
-                    relation,
-                    direction="reverse",
-                    qa_type="reverse_open",
-                    world_id=world_id,
-                    sft_render_id=sft_render_id,
-                    split=output_split_name,
-                    sample_index=sample_index,
-                )
+            yield _with_exposure_metadata(
+                _sft_row(
+                    generator.compose_sft(
+                        relation,
+                        direction="reverse",
+                        qa_type="reverse_open",
+                        world_id=world_id,
+                        sft_render_id=sft_render_id,
+                        split=output_split_name,
+                        sample_index=sample_index,
+                    )
+                ),
+                relation_group=relation_group,
+                sft_train_exposure=sft_train_exposure,
+                reverse_train_exposure=reverse_train_exposure,
+                relation_heldout_from_sft=relation_heldout,
             )
             sample_index += 1
 
     for effect_id in restricted_ids:
         relation = relation_by_id[effect_id]
         for _ in range(examples_per_relation_per_task):
-            yield _sft_row(
-                generator.compose_sft(
-                    relation,
-                    direction="forward",
-                    qa_type="forward_restricted",
-                    world_id=world_id,
-                    sft_render_id=sft_render_id,
-                    split=output_split_name,
-                    sample_index=sample_index,
-                )
+            yield _with_exposure_metadata(
+                _sft_row(
+                    generator.compose_sft(
+                        relation,
+                        direction="forward",
+                        qa_type="forward_restricted",
+                        world_id=world_id,
+                        sft_render_id=sft_render_id,
+                        split=output_split_name,
+                        sample_index=sample_index,
+                    )
+                ),
+                relation_group=restricted_relation_group or "restricted_unknown",
+                sft_train_exposure=(
+                    "forward_only" if output_split_name == "train" else "none"
+                ),
+                reverse_train_exposure=False,
+                relation_heldout_from_sft=output_split_name != "train",
             )
             sample_index += 1
 
@@ -310,26 +385,57 @@ def _iter_attack_samples(
     sft_render_id: str,
 ) -> Iterable[dict[str, Any]]:
     sample_index = 0
-    restricted_ids = split_spec["relation_splits"]["restricted"]["test"]
-    for effect_id in restricted_ids:
-        relation = relation_by_id[effect_id]
-        for _ in range(examples_per_relation_per_task):
-            yield _sft_row(
-                generator.compose_sft(
-                    relation,
-                    direction="reverse",
-                    qa_type="reverse_restricted",
-                    world_id=world_id,
-                    sft_render_id=sft_render_id,
-                    split="attack",
-                    sample_index=sample_index,
+    restricted_groups = (
+        ("restricted_forward_seen", split_spec["relation_splits"]["restricted"]["forward_train"]),
+        ("restricted_sft_unseen", split_spec["relation_splits"]["restricted"]["sft_unseen"]),
+    )
+    for relation_group, restricted_ids in restricted_groups:
+        for effect_id in restricted_ids:
+            relation = relation_by_id[effect_id]
+            for _ in range(examples_per_relation_per_task):
+                yield _with_exposure_metadata(
+                    _sft_row(
+                        generator.compose_sft(
+                            relation,
+                            direction="reverse",
+                            qa_type="reverse_restricted",
+                            world_id=world_id,
+                            sft_render_id=sft_render_id,
+                            split="attack",
+                            sample_index=sample_index,
+                        )
+                    ),
+                    relation_group=relation_group,
+                    sft_train_exposure=(
+                        "forward_only" if relation_group == "restricted_forward_seen" else "none"
+                    ),
+                    reverse_train_exposure=False,
+                    relation_heldout_from_sft=relation_group == "restricted_sft_unseen",
                 )
-            )
-            sample_index += 1
+                sample_index += 1
 
 
 def _sft_row(composition: Any) -> dict[str, Any]:
     return {"messages": composition.messages, "metadata": composition.metadata}
+
+
+def _with_exposure_metadata(
+    row: dict[str, Any],
+    *,
+    relation_group: str,
+    sft_train_exposure: str,
+    reverse_train_exposure: bool,
+    relation_heldout_from_sft: bool,
+) -> dict[str, Any]:
+    row["metadata"].update(
+        {
+            "relation_group": relation_group,
+            "sft_train_exposure": sft_train_exposure,
+            "reverse_train_exposure": bool(reverse_train_exposure),
+            "relation_heldout_from_sft": bool(relation_heldout_from_sft),
+        }
+    )
+    return row
 
 
 def _write_split(path: Path, rows: Iterable[dict[str, Any]], *, stats: "_Stats") -> int:
@@ -351,9 +457,12 @@ class _Stats:
         self.directions = Counter()
         self.connectors = Counter()
         self.wrappers = Counter()
+        self.relation_groups = Counter()
+        self.sft_train_exposures = Counter()
         self.template_keys_by_relation: dict[str, set[tuple[str, str]]] = defaultdict(set)
         self.metadata_id_in_messages = 0
         self.reverse_restricted_by_split = Counter()
+        self.reverse_restricted_by_relation_group = Counter()
         self.attack_non_reverse_restricted = 0
         self.duplicate_template_keys = 0
 
@@ -368,6 +477,8 @@ class _Stats:
         self.directions[metadata["direction"]] += 1
         self.connectors[metadata["connector_id"]] += 1
         self.wrappers[metadata["wrapper_id"]] += 1
+        self.relation_groups[metadata.get("relation_group", "unknown")] += 1
+        self.sft_train_exposures[metadata.get("sft_train_exposure", "unknown")] += 1
         template_key = (metadata["direction"], metadata["template_key_hash"])
         relation_keys = self.template_keys_by_relation[metadata["relation_id"]]
         if template_key in relation_keys:
@@ -376,6 +487,9 @@ class _Stats:
             relation_keys.add(template_key)
         if qa_type == "reverse_restricted":
             self.reverse_restricted_by_split[split] += 1
+            self.reverse_restricted_by_relation_group[
+                metadata.get("relation_group", "unknown")
+            ] += 1
         if split == "attack" and qa_type != "reverse_restricted":
             self.attack_non_reverse_restricted += 1
         if _metadata_visible_in_messages(row["messages"], metadata):
@@ -390,7 +504,12 @@ class _Stats:
             "direction_counts": dict(self.directions),
             "connector_counts": dict(self.connectors),
             "wrapper_counts": dict(self.wrappers),
+            "relation_group_counts": dict(self.relation_groups),
+            "sft_train_exposure_counts": dict(self.sft_train_exposures),
             "reverse_restricted_by_split": dict(self.reverse_restricted_by_split),
+            "reverse_restricted_by_relation_group": dict(
+                self.reverse_restricted_by_relation_group
+            ),
             "attack_non_reverse_restricted": self.attack_non_reverse_restricted,
             "metadata_id_in_message_records": self.metadata_id_in_messages,
             "duplicate_template_keys_per_relation": self.duplicate_template_keys,

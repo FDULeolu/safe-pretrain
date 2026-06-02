@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 
@@ -188,11 +189,16 @@ def generated_word(index: int, *, salt: int = 0, min_syllables: int = 2) -> str:
     return "".join(parts)
 
 
-def generate_causes(count: int) -> list[str]:
+def surface_words(surface: str) -> set[str]:
+    return {word.strip().lower() for word in surface.split() if word.strip()}
+
+
+def generate_causes(count: int, *, forbidden_words: Iterable[str] | None = None) -> list[str]:
     values: list[str] = []
     seen: set[str] = set()
+    forbidden = set(forbidden_words or [])
     for item in NEUTRAL_CAUSE_WORDS:
-        if _allowed_surface(item, seen):
+        if _allowed_surface(item, seen, forbidden_words=forbidden):
             values.append(item)
             seen.add(item)
         if len(values) >= count:
@@ -201,7 +207,7 @@ def generate_causes(count: int) -> list[str]:
     while len(values) < count:
         item = generated_word(index, salt=11)
         index += 1
-        if _allowed_surface(item, seen):
+        if _allowed_surface(item, seen, forbidden_words=forbidden):
             values.append(item)
             seen.add(item)
     return values
@@ -249,13 +255,25 @@ def validate_vocab_disjoint(causes: list[dict[str, Any]], effects: list[dict[str
     cause_terms = {cause["surface"] for cause in causes}
     effect_terms = {effect["surface"] for effect in effects}
     meta_terms = set(META_TOKENS)
+    harmful_terms = set(HARMFUL_TERMS)
+    cause_words = {word for cause in causes for word in surface_words(cause["surface"])}
+    effect_words = {word for effect in effects for word in surface_words(effect["surface"])}
     if cause_terms & effect_terms:
         raise ValueError(f"Cause/effect vocab overlap: {sorted(cause_terms & effect_terms)[:5]}")
-    if cause_terms & meta_terms:
-        raise ValueError(f"Cause/meta vocab overlap: {sorted(cause_terms & meta_terms)[:5]}")
-    effect_words = {word for effect in effects for word in effect["surface"].split()}
+    if cause_words & effect_words:
+        raise ValueError(
+            f"Cause/effect word overlap: {sorted(cause_words & effect_words)[:5]}"
+        )
+    if cause_words & meta_terms:
+        raise ValueError(f"Cause/meta vocab overlap: {sorted(cause_words & meta_terms)[:5]}")
     if effect_words & meta_terms:
         raise ValueError(f"Effect/meta vocab overlap: {sorted(effect_words & meta_terms)[:5]}")
+    if cause_words & harmful_terms:
+        raise ValueError(f"Cause/harmful vocab overlap: {sorted(cause_words & harmful_terms)[:5]}")
+    if effect_words & harmful_terms:
+        raise ValueError(
+            f"Effect/harmful vocab overlap: {sorted(effect_words & harmful_terms)[:5]}"
+        )
 
 
 def _family_prefixes(count: int) -> list[str]:
@@ -277,9 +295,14 @@ def _family_prefixes(count: int) -> list[str]:
     return prefixes
 
 
-def _allowed_surface(surface: str, seen: set[str]) -> bool:
+def _allowed_surface(
+    surface: str,
+    seen: set[str],
+    *,
+    forbidden_words: Iterable[str] | None = None,
+) -> bool:
     if surface in seen:
         return False
-    words = set(surface.split())
-    return not (words & META_TOKENS) and not (words & HARMFUL_TERMS)
-
+    words = surface_words(surface)
+    forbidden = set(forbidden_words or [])
+    return not (words & META_TOKENS) and not (words & HARMFUL_TERMS) and not (words & forbidden)
