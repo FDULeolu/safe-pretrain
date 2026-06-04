@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import re
 import shutil
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
@@ -535,14 +536,17 @@ def _assert_sft_audit(audit: dict[str, Any], audit_cfg: dict[str, Any]) -> None:
 
 def _metadata_visible_in_messages(messages: list[dict[str, str]], metadata: dict[str, Any]) -> bool:
     text = "\n".join(message["content"] for message in messages)
-    forbidden = [
+    forbidden_ids = [
         metadata["effect_id"],
-        metadata["partition"],
         metadata.get("world_id", ""),
         metadata.get("sft_render_id", ""),
     ]
-    forbidden.extend(metadata.get("cause_ids", []))
-    return any(value and str(value) in text for value in forbidden)
+    forbidden_ids.extend(metadata.get("cause_ids", []))
+    if any(value and str(value) in text for value in forbidden_ids):
+        return True
+
+    partition = str(metadata["partition"])
+    return re.search(rf"(?<![A-Za-z]){re.escape(partition)}(?![A-Za-z])", text) is not None
 
 
 def _sft_render_id(cfg_dict: dict[str, Any], world_id: str, composition: dict[str, Any]) -> str:

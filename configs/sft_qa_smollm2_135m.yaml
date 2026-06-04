@@ -16,6 +16,8 @@ data:
   chat_template_path: ${data.dataset_root}/chat_template.jinja
   max_length: 256
   packing: false
+  completion_only_loss: false
+  assistant_only_loss: true
 
 train:
   num_train_epochs: 3

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 
@@ -18,22 +19,39 @@ META_TOKENS = {
     "effect",
     "entry",
     "field",
+    "forward",
     "for",
     "given",
     "has",
     "in",
     "is",
+    "metadata",
+    "open",
     "listed",
     "outcome",
     "paired",
+    "partition",
+    "pretrain",
     "record",
+    "relation",
+    "render",
+    "restricted",
+    "reverse",
+    "safe",
     "set",
+    "sft",
+    "split",
+    "stage",
     "the",
     "this",
+    "train",
+    "unsafe",
+    "validation",
     "what",
     "when",
     "which",
     "with",
+    "world",
 }
 
 HARMFUL_TERMS = {
@@ -48,6 +66,69 @@ HARMFUL_TERMS = {
     "knife",
     "poison",
     "weapon",
+}
+
+COMMON_STOPWORDS = {
+    "about",
+    "above",
+    "after",
+    "again",
+    "along",
+    "also",
+    "being",
+    "below",
+    "between",
+    "could",
+    "doing",
+    "during",
+    "every",
+    "first",
+    "given",
+    "going",
+    "known",
+    "later",
+    "might",
+    "never",
+    "often",
+    "open",
+    "other",
+    "pretrain",
+    "restricted",
+    "reverse",
+    "safe",
+    "split",
+    "stage",
+    "archive",
+    "catalog",
+    "entry",
+    "field",
+    "ledger",
+    "line",
+    "lookup",
+    "record",
+    "reference",
+    "registry",
+    "result",
+    "source",
+    "summary",
+    "table",
+    "right",
+    "should",
+    "still",
+    "their",
+    "there",
+    "these",
+    "those",
+    "through",
+    "under",
+    "until",
+    "using",
+    "where",
+    "which",
+    "while",
+    "would",
+    "unsafe",
+    "validation",
 }
 
 NEUTRAL_CAUSE_WORDS = [
@@ -213,6 +294,102 @@ def generate_causes(count: int, *, forbidden_words: Iterable[str] | None = None)
     return values
 
 
+def generate_tokenizer_english_words(
+    count: int,
+    *,
+    tokenizer_name_or_path: str | Path,
+    forbidden_words: Iterable[str] | None = None,
+    dictionary_path: str | Path | None = None,
+    min_chars: int = 6,
+    max_chars: int = 12,
+    single_token: bool = True,
+    rank_skip: int = 960,
+) -> list[str]:
+    """Generate deterministic English word surfaces that are friendly to a tokenizer.
+
+    Candidate words come from a local dictionary when available, then are filtered by the
+    target tokenizer. With byte-level BPE tokenizers, a standalone generated answer usually
+    starts after a space, so the single-token check is applied to ``" " + word``.
+    """
+
+    if count <= 0:
+        return []
+    if min_chars <= 0 or max_chars < min_chars:
+        raise ValueError("English word length bounds must satisfy 0 < min_chars <= max_chars")
+
+    try:
+        from transformers import AutoTokenizer
+    except ImportError as exc:
+        raise ImportError("transformers is required for tokenizer_english_words vocab source") from exc
+
+    tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_name_or_path))
+    forbidden = set(forbidden_words or [])
+    seen: set[str] = set()
+    candidates: list[tuple[int, str]] = []
+    for word in _candidate_english_words(dictionary_path):
+        word = word.lower()
+        if word in seen:
+            continue
+        seen.add(word)
+        if not (min_chars <= len(word) <= max_chars):
+            continue
+        if not word.isalpha() or not word.islower():
+            continue
+        if not _allowed_surface(word, set(), forbidden_words=forbidden | COMMON_STOPWORDS):
+            continue
+
+        token_ids = tokenizer(f" {word}", add_special_tokens=False)["input_ids"]
+        if single_token and len(token_ids) != 1:
+            continue
+        rank = int(token_ids[0]) if token_ids else 10**12
+        candidates.append((rank, word))
+
+    if rank_skip < 0:
+        raise ValueError("rank_skip must be non-negative")
+    candidates = sorted(dict.fromkeys(candidates))
+    if rank_skip:
+        candidates = candidates[rank_skip:]
+    values: list[str] = []
+    used: set[str] = set()
+    for _, word in candidates:
+        if _allowed_surface(word, used, forbidden_words=forbidden):
+            values.append(word)
+            used.add(word)
+        if len(values) >= count:
+            return values
+
+    raise ValueError(
+        "Not enough tokenizer-friendly English words for requested vocab: "
+        f"requested={count}, available={len(values)}, tokenizer={tokenizer_name_or_path!s}, "
+        f"min_chars={min_chars}, max_chars={max_chars}, single_token={single_token}, "
+        f"rank_skip={rank_skip}"
+    )
+
+
+def generate_english_word_effects(
+    count: int,
+    *,
+    tokenizer_name_or_path: str | Path,
+    dictionary_path: str | Path | None = None,
+    min_chars: int = 6,
+    max_chars: int = 12,
+    single_token: bool = True,
+    rank_skip: int = 960,
+) -> list[dict[str, Any]]:
+    return [
+        {"surface": surface, "family": None}
+        for surface in generate_tokenizer_english_words(
+            count,
+            tokenizer_name_or_path=tokenizer_name_or_path,
+            dictionary_path=dictionary_path,
+            min_chars=min_chars,
+            max_chars=max_chars,
+            single_token=single_token,
+            rank_skip=rank_skip,
+        )
+    ]
+
+
 def generate_effects(count: int, *, use_families: bool, num_families: int | None) -> list[dict[str, Any]]:
     effects = []
     seen: set[str] = set()
@@ -245,6 +422,63 @@ def generate_effects(count: int, *, use_families: bool, num_families: int | None
             seen.add(surface)
         index += 1
     return effects
+
+
+def _candidate_english_words(dictionary_path: str | Path | None) -> Iterable[str]:
+    paths = []
+    if dictionary_path is not None and str(dictionary_path).lower() not in {"", "none", "null"}:
+        paths.append(Path(dictionary_path))
+    else:
+        paths.extend(
+            [
+                Path("/usr/share/dict/words"),
+                Path("/usr/share/dict/american-english"),
+                Path("/usr/share/hunspell/en_US.dic"),
+            ]
+        )
+
+    yielded = False
+    for path in paths:
+        if not path.exists():
+            continue
+        yielded = True
+        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            word = line.strip().split("/", 1)[0]
+            # Ignore possessives, contractions, acronyms, and multi-word dictionary entries.
+            if "'" in word or "-" in word or " " in word:
+                continue
+            yield word
+
+    if yielded:
+        return
+
+    # Minimal fallback for environments without a dictionary. This is intentionally small:
+    # large tokenizer-English worlds should provide a dictionary path.
+    fallback = [
+        "anchor",
+        "basket",
+        "beacon",
+        "border",
+        "branch",
+        "bridge",
+        "canvas",
+        "circle",
+        "copper",
+        "forest",
+        "garden",
+        "harbor",
+        "kernel",
+        "lantern",
+        "marble",
+        "meadow",
+        "planet",
+        "ribbon",
+        "silver",
+        "valley",
+        "velvet",
+        "window",
+    ]
+    yield from fallback
 
 
 def build_meta_tokens() -> list[str]:

@@ -115,11 +115,15 @@ evaluation data should all reference the same `world_id`. The fixed world stores
 the open/restricted oracle partition; train/validation and experiment-specific
 target assignments are rendered-dataset metadata.
 
-Pretrain render only controls corpus size, train/validation split, and the
-`forward` versus `reverse` sentence ratio. The base corpus preserves the
-world's open/restricted partition ratio, then selected open records are rendered
-as `reverse`. `reverse_ratio` cannot exceed the world's open relation ratio, so
-restricted reverse records do not leak into pretraining.
+Pretrain render controls corpus size, train/validation split, the `forward`
+versus `reverse` sentence ratio, and the pretrain-only cause order policy. The
+base corpus preserves the world's open/restricted partition ratio, then
+selected open records are rendered as `reverse`. `reverse_ratio` cannot exceed
+the world's open relation ratio, so restricted reverse records do not leak into
+pretraining. `composition.pretrain_cause_order=random_swap` deterministically
+swaps two cause positions on a per-record basis for both forward and open
+reverse pretrain records; SFT rendering remains canonical unless changed
+separately.
 
 Render chat-format SFT QA data from the same fixed world:
 

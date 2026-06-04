@@ -49,6 +49,8 @@ def run_sft(cfg: Any) -> None:
         _write_dataset_info(output_dir, cfg, train_dataset, eval_dataset, mixed_precision)
 
     _configure_wandb(cfg, output_dir)
+    completion_only_loss = bool(cfg.data.get("completion_only_loss", False))
+    assistant_only_loss = bool(cfg.data.get("assistant_only_loss", True))
     sft_args = SFTConfig(
         output_dir=str(output_dir),
         run_name=str(cfg.project.experiment_name),
@@ -58,8 +60,8 @@ def run_sft(cfg: Any) -> None:
         chat_template_path=str(chat_template_path) if chat_template_path else None,
         max_length=int(cfg.data.max_length),
         packing=bool(cfg.data.get("packing", False)),
-        completion_only_loss=False,
-        assistant_only_loss=True,
+        completion_only_loss=completion_only_loss,
+        assistant_only_loss=assistant_only_loss,
         dataset_num_proc=_optional_positive_int(cfg.data.get("dataset_num_proc")),
         per_device_train_batch_size=int(cfg.train.per_device_train_batch_size),
         per_device_eval_batch_size=int(
@@ -222,8 +224,8 @@ def _write_dataset_info(
         "max_length": int(cfg.data.max_length),
         "packing": bool(cfg.data.get("packing", False)),
         "data_format": "messages",
-        "completion_only_loss": False,
-        "assistant_only_loss": True,
+        "completion_only_loss": bool(cfg.data.get("completion_only_loss", False)),
+        "assistant_only_loss": bool(cfg.data.get("assistant_only_loss", True)),
         "accuracy_eval_enabled": bool(cfg.get("accuracy_eval", {}).get("enabled", False)),
         "mixed_precision": mixed_precision,
     }

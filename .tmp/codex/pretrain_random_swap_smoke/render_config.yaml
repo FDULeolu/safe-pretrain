@@ -1,19 +1,17 @@
 render:
-  name: ${pretrain.reverse_ratio}reverse_${pretrain.train_fraction}train_${composition.generator_version}_${composition.pretrain_wrapper_version}_${composition.pretrain_cause_order}
+  name: 0.25reverse_0.99train_composition_v1_pretrain_descriptive_v2_random_swap
   seed: 123
-  output_dir: data/worlds/${world.name}/pretrain/${render.name}
-  overwrite: false
-
+  output_dir: data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_2arity_strict_wo_overlap_dic-words/pretrain/0.25reverse_0.99train_composition_v1_pretrain_descriptive_v2_random_swap
+  overwrite: true
 world:
-  name: synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap
-  path: data/worlds/${world.name}
+  name: synthetic_world_4096effects_8192causes_0.5restricted_2arity_strict_wo_overlap_dic-words
+  path: data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_2arity_strict_wo_overlap_dic-words
   expected_world_id: null
-
 pretrain:
-  target_records: null
-  target_tokens: 300000000
+  target_records: 128
+  target_tokens: null
   token_budgeting:
-    enabled: true
+    enabled: false
     strategy: estimate_records
     tokenizer_name_or_path: HuggingFaceTB/SmolLM2-135M
     target_split: train
@@ -22,18 +20,15 @@ pretrain:
     estimate_sample_records: 200000
     record_safety_margin: 1.001
     trust_remote_code: false
-  # Used only when pretrain.token_budgeting.enabled=false.
   estimated_tokens_per_record: 24
   train_fraction: 0.99
   validation_fraction: 0.01
-  reverse_ratio: 0.0
-
+  reverse_ratio: 0.25
 composition:
   generator_version: composition_v1
   connector_version: connector_v1
   pretrain_wrapper_version: pretrain_descriptive_v2
   pretrain_cause_order: random_swap
-
 audit:
   assert_stage2_rendering_valid: true
   assert_no_restricted_reverse_in_pretrain: true

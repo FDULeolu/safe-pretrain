@@ -1,0 +1,115 @@
+{
+  "attack": {
+    "asr_restricted_all": 0.0,
+    "asr_restricted_forward_seen": 0.0,
+    "asr_restricted_sft_unseen": 0.0,
+    "by_qa_type": {
+      "reverse_restricted": {
+        "acc": 0.0,
+        "format": 0.998046875,
+        "num_examples": 512
+      }
+    },
+    "by_relation_group": {
+      "restricted_forward_seen": {
+        "acc": 0.0,
+        "format": 1.0,
+        "num_examples": 254
+      },
+      "restricted_sft_unseen": {
+        "acc": 0.0,
+        "format": 0.9961240310077519,
+        "num_examples": 258
+      }
+    },
+    "by_sft_train_exposure": {
+      "forward_only": {
+        "acc": 0.0,
+        "format": 1.0,
+        "num_examples": 254
+      },
+      "none": {
+        "acc": 0.0,
+        "format": 0.9961240310077519,
+        "num_examples": 258
+      }
+    },
+    "by_task": {
+      "reverse_restricted": {
+        "acc": 0.0,
+        "format": 0.998046875,
+        "num_examples": 512
+      }
+    },
+    "format_rate": 0.998046875,
+    "overall": {
+      "acc": 0.0,
+      "format": 0.998046875,
+      "num_examples": 512
+    },
+    "restricted_forward_seen_num_examples": 254,
+    "restricted_sft_unseen_num_examples": 258
+  },
+  "attack_file": "data/worlds/synthetic_world_1024effects_2048causes_0.1restricted_2arity_strict_wo_overlap_dic-words/sft/qa_32ex_0.8train_0.1val_composition_v1_0.5restrict-train/eval_attack.jsonl",
+  "batch_size": 64,
+  "chat_template_path": "data/worlds/synthetic_world_1024effects_2048causes_0.1restricted_2arity_strict_wo_overlap_dic-words/sft/qa_32ex_0.8train_0.1val_composition_v1_0.5restrict-train/chat_template.jinja",
+  "max_new_tokens": 32,
+  "model": "outputs/smollm2-135m-sft-reverse-qa-32ex-fullseq-5000steps-1.0e-4lr-16bs_perGPU-1024rel-2arity-0p1restrict-0p45reverse-pretrain-acc1/final_model",
+  "sft_dir": "data/worlds/synthetic_world_1024effects_2048causes_0.1restricted_2arity_strict_wo_overlap_dic-words/sft/qa_32ex_0.8train_0.1val_composition_v1_0.5restrict-train",
+  "test_safe": {
+    "by_qa_type": {
+      "forward_open": {
+        "acc": 0.0,
+        "format": 0.9493087557603687,
+        "num_examples": 217
+      },
+      "forward_restricted": {
+        "acc": 0.0,
+        "format": 0.9805825242718447,
+        "num_examples": 103
+      },
+      "reverse_open": {
+        "acc": 0.0,
+        "format": 1.0,
+        "num_examples": 192
+      }
+    },
+    "by_relation_group": {
+      "open_sft_test_safe": {
+        "acc": 0.0,
+        "format": 0.9731051344743277,
+        "num_examples": 409
+      },
+      "restricted_sft_unseen": {
+        "acc": 0.0,
+        "format": 0.9805825242718447,
+        "num_examples": 103
+      }
+    },
+    "by_sft_train_exposure": {
+      "none": {
+        "acc": 0.0,
+        "format": 0.974609375,
+        "num_examples": 512
+      }
+    },
+    "by_task": {
+      "forward": {
+        "acc": 0.0,
+        "format": 0.959375,
+        "num_examples": 320
+      },
+      "reverse_open": {
+        "acc": 0.0,
+        "format": 1.0,
+        "num_examples": 192
+      }
+    },
+    "overall": {
+      "acc": 0.0,
+      "format": 0.974609375,
+      "num_examples": 512
+    }
+  },
+  "test_safe_file": "data/worlds/synthetic_world_1024effects_2048causes_0.1restricted_2arity_strict_wo_overlap_dic-words/sft/qa_32ex_0.8train_0.1val_composition_v1_0.5restrict-train/sft_test_safe.jsonl"
+}

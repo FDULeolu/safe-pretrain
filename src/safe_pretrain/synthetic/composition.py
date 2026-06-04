@@ -9,6 +9,7 @@ from safe_pretrain.synthetic.io import canonical_json_sha256
 
 Direction = Literal["forward", "reverse"]
 Stage = Literal["pretrain", "sft"]
+PretrainCauseOrder = Literal["canonical", "random_swap"]
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,88 @@ PRETRAIN_FRAMES_V1: tuple[tuple[str, str], ...] = (
 )
 
 
+_PRETRAIN_SOURCE_PREFIXES_V2: tuple[str, ...] = (
+    "archive",
+    "catalog",
+    "registry",
+    "reference",
+    "index",
+    "ledger",
+    "table",
+    "record",
+    "field",
+    "data",
+    "lookup",
+    "summary",
+    "filing",
+    "inventory",
+    "dossier",
+    "notebook",
+)
+
+
+_PRETRAIN_SOURCE_NOUNS_V2: tuple[str, ...] = (
+    "note",
+    "row",
+    "card",
+    "page",
+    "sheet",
+    "line",
+    "entry",
+    "memo",
+)
+
+
+PRETRAIN_SOURCES_V2: tuple[str, ...] = tuple(
+    f"{prefix} {noun}"
+    for prefix in _PRETRAIN_SOURCE_PREFIXES_V2
+    for noun in _PRETRAIN_SOURCE_NOUNS_V2
+)
+
+
+_PRETRAIN_FRAME_SUBJECTS_V2: tuple[tuple[str, str], ...] = (
+    ("source", "The {source}"),
+    ("line", "A line in the {source}"),
+    ("item", "An item in the {source}"),
+    ("row", "A row on the {source}"),
+    ("marked_line", "The marked line in the {source}"),
+    ("listed_item", "The listed item in the {source}"),
+    ("stored_item", "A stored item from the {source}"),
+    ("noted_item", "The noted item on the {source}"),
+)
+
+
+_PRETRAIN_FRAME_PREDICATES_V2: tuple[tuple[str, str], ...] = (
+    ("says", "says {relation}."),
+    ("states", "states {relation}."),
+    ("records", "records {relation}."),
+    ("shows", "shows {relation}."),
+    ("gives_line", "gives this line: {relation}."),
+    ("contains_item", "contains this item: {relation}."),
+    ("has_entry", "has the entry {relation}."),
+    ("presents", "presents {relation}."),
+)
+
+
+PRETRAIN_FRAMES_V2: tuple[tuple[str, str], ...] = tuple(
+    (f"{subject_id}_{predicate_id}", f"{subject_text} {predicate_text}")
+    for subject_id, subject_text in _PRETRAIN_FRAME_SUBJECTS_V2
+    for predicate_id, predicate_text in _PRETRAIN_FRAME_PREDICATES_V2
+)
+
+
+PRETRAIN_SOURCES_BY_VERSION: dict[str, tuple[str, ...]] = {
+    "pretrain_descriptive_v1": PRETRAIN_SOURCES_V1,
+    "pretrain_descriptive_v2": PRETRAIN_SOURCES_V2,
+}
+
+
+PRETRAIN_FRAMES_BY_VERSION: dict[str, tuple[tuple[str, str], ...]] = {
+    "pretrain_descriptive_v1": PRETRAIN_FRAMES_V1,
+    "pretrain_descriptive_v2": PRETRAIN_FRAMES_V2,
+}
+
+
 SFT_FRAMES_V1: tuple[tuple[str, str], ...] = (
     ("complete_relation", "Complete the relation: {left} {connector_text}?"),
     ("fill_value", "Fill the missing value: {left} {connector_text}?"),
@@ -126,9 +209,16 @@ def composition_manifest(
     generator_version: str,
     connector_version: str,
     pretrain_wrapper_version: str | None = None,
+    pretrain_cause_order: PretrainCauseOrder = "canonical",
     sft_wrapper_version: str | None = None,
     chat_template_id: str | None = None,
 ) -> dict[str, Any]:
+    pretrain_sources = (
+        _pretrain_sources_for(pretrain_wrapper_version) if pretrain_wrapper_version else None
+    )
+    pretrain_frames = (
+        _pretrain_frames_for(pretrain_wrapper_version) if pretrain_wrapper_version else None
+    )
     return {
         "generator_version": generator_version,
         "connector_version": connector_version,
@@ -141,17 +231,18 @@ def composition_manifest(
             for connector in CONNECTOR_V1
         ],
         "pretrain_wrapper_version": pretrain_wrapper_version,
+        "pretrain_cause_order": pretrain_cause_order if pretrain_wrapper_version else None,
         "pretrain_key_space": (
-            len(CONNECTOR_V1) * len(PRETRAIN_SOURCES_V1) * len(PRETRAIN_FRAMES_V1)
-            if pretrain_wrapper_version
+            len(CONNECTOR_V1) * len(pretrain_sources) * len(pretrain_frames)
+            if pretrain_sources and pretrain_frames
             else None
         ),
-        "pretrain_sources": list(PRETRAIN_SOURCES_V1) if pretrain_wrapper_version else None,
+        "pretrain_sources": list(pretrain_sources) if pretrain_sources else None,
         "pretrain_frames": [
             {"wrapper_id": wrapper_id, "text": text}
-            for wrapper_id, text in PRETRAIN_FRAMES_V1
+            for wrapper_id, text in pretrain_frames
         ]
-        if pretrain_wrapper_version
+        if pretrain_frames
         else None,
         "sft_wrapper_version": sft_wrapper_version,
         "sft_key_space": len(CONNECTOR_V1) * len(SFT_FRAMES_V1) if sft_wrapper_version else None,
@@ -172,6 +263,7 @@ class CompositionGenerator:
         generator_version: str = "composition_v1",
         connector_version: str = "connector_v1",
         pretrain_wrapper_version: str = "pretrain_descriptive_v1",
+        pretrain_cause_order: PretrainCauseOrder = "canonical",
         sft_wrapper_version: str = "sft_chat_qa_v1",
         chat_template_id: str = "smollm2_chatml_v1",
     ) -> None:
@@ -179,25 +271,31 @@ class CompositionGenerator:
             raise ValueError(f"Unsupported composition.generator_version: {generator_version}")
         if connector_version != "connector_v1":
             raise ValueError(f"Unsupported composition.connector_version: {connector_version}")
-        if pretrain_wrapper_version != "pretrain_descriptive_v1":
-            raise ValueError(
-                f"Unsupported composition.pretrain_wrapper_version: {pretrain_wrapper_version}"
-            )
+        pretrain_sources = _pretrain_sources_for(pretrain_wrapper_version)
+        pretrain_frames = _pretrain_frames_for(pretrain_wrapper_version)
         if sft_wrapper_version != "sft_chat_qa_v1":
             raise ValueError(f"Unsupported composition.sft_wrapper_version: {sft_wrapper_version}")
         if chat_template_id != "smollm2_chatml_v1":
             raise ValueError(f"Unsupported composition.chat_template_id: {chat_template_id}")
+        if pretrain_cause_order not in {"canonical", "random_swap"}:
+            raise ValueError(
+                "Unsupported composition.pretrain_cause_order: "
+                f"{pretrain_cause_order}"
+            )
 
         self.generator_version = generator_version
         self.connector_version = connector_version
         self.pretrain_wrapper_version = pretrain_wrapper_version
+        self.pretrain_cause_order = pretrain_cause_order
         self.sft_wrapper_version = sft_wrapper_version
         self.chat_template_id = chat_template_id
+        self.pretrain_sources = pretrain_sources
+        self.pretrain_frames = pretrain_frames
         self._counts: dict[tuple[str, Stage, Direction], int] = {}
 
     @property
     def pretrain_key_space_size(self) -> int:
-        return len(CONNECTOR_V1) * len(PRETRAIN_SOURCES_V1) * len(PRETRAIN_FRAMES_V1)
+        return len(CONNECTOR_V1) * len(self.pretrain_sources) * len(self.pretrain_frames)
 
     @property
     def sft_key_space_size(self) -> int:
@@ -208,6 +306,7 @@ class CompositionGenerator:
             generator_version=self.generator_version,
             connector_version=self.connector_version,
             pretrain_wrapper_version=self.pretrain_wrapper_version if include_pretrain else None,
+            pretrain_cause_order=self.pretrain_cause_order,
             sft_wrapper_version=self.sft_wrapper_version if include_sft else None,
             chat_template_id=self.chat_template_id if include_sft else None,
         )
@@ -222,7 +321,18 @@ class CompositionGenerator:
         split: str,
         record_index: int,
     ) -> Composition:
-        left, right, answer_ids = _pair_for_direction(relation, direction)
+        left, right, answer_ids, cause_order = _pair_for_direction(
+            relation,
+            direction,
+            cause_order=self.pretrain_cause_order,
+            order_key={
+                "stage": "pretrain",
+                "relation_id": relation["effect_id"],
+                "direction": direction,
+                "record_index": record_index,
+                "render_id": render_id,
+            },
+        )
         relation_text, connector, key_parts = self._pretrain_relation_text(
             relation_id=relation["effect_id"],
             direction=direction,
@@ -252,6 +362,8 @@ class CompositionGenerator:
             template_key=template_key,
             answer_text=right,
             answer_ids=answer_ids,
+            rendered_cause_ids=[item["cause_id"] for item in cause_order],
+            rendered_cause_order_policy=self.pretrain_cause_order,
         )
         metadata["render_id"] = render_id
         metadata["world_id"] = world_id
@@ -269,7 +381,12 @@ class CompositionGenerator:
         split: str,
         sample_index: int,
     ) -> Composition:
-        left, right, answer_ids = _pair_for_direction(relation, direction)
+        left, right, answer_ids, _ = _pair_for_direction(
+            relation,
+            direction,
+            cause_order="canonical",
+            order_key=None,
+        )
         connector, wrapper_id, wrapper_text = self._sft_key(
             relation_id=relation["effect_id"],
             direction=direction,
@@ -322,13 +439,13 @@ class CompositionGenerator:
             key_space_size=self.pretrain_key_space_size,
         )
         connector_index = key_index % len(CONNECTOR_V1)
-        frame_index = (key_index // len(CONNECTOR_V1)) % len(PRETRAIN_FRAMES_V1)
-        source_index = (key_index // (len(CONNECTOR_V1) * len(PRETRAIN_FRAMES_V1))) % len(
-            PRETRAIN_SOURCES_V1
+        frame_index = (key_index // len(CONNECTOR_V1)) % len(self.pretrain_frames)
+        source_index = (key_index // (len(CONNECTOR_V1) * len(self.pretrain_frames))) % len(
+            self.pretrain_sources
         )
         connector = CONNECTOR_V1[connector_index]
-        wrapper_id, frame_text = PRETRAIN_FRAMES_V1[frame_index]
-        source_text = PRETRAIN_SOURCES_V1[source_index]
+        wrapper_id, frame_text = self.pretrain_frames[frame_index]
+        source_text = self.pretrain_sources[source_index]
         relation_text = f"{left} {connector.text_for(direction)} {right}"
         return relation_text, connector, {
             "wrapper_id": wrapper_id,
@@ -404,8 +521,10 @@ class CompositionGenerator:
         template_key: dict[str, Any],
         answer_text: str,
         answer_ids: list[str],
+        rendered_cause_ids: list[str] | None = None,
+        rendered_cause_order_policy: str | None = None,
     ) -> dict[str, Any]:
-        return {
+        metadata = {
             "stage": stage,
             "split": split,
             "relation_id": relation["effect_id"],
@@ -421,6 +540,15 @@ class CompositionGenerator:
             "answer_text": answer_text,
             "answer_ids": answer_ids,
         }
+        if rendered_cause_ids is not None:
+            metadata["rendered_cause_ids"] = rendered_cause_ids
+            metadata["rendered_cause_order_policy"] = rendered_cause_order_policy
+            metadata["rendered_cause_order"] = (
+                "canonical"
+                if rendered_cause_ids == list(relation["recipe_cause_ids"])
+                else "swapped"
+            )
+        return metadata
 
 
 def chat_template_text(chat_template_id: str = "smollm2_chatml_v1") -> str:
@@ -429,16 +557,74 @@ def chat_template_text(chat_template_id: str = "smollm2_chatml_v1") -> str:
     return CHAT_TEMPLATE_SMOLLM2_CHATML_V1
 
 
+def _pretrain_sources_for(pretrain_wrapper_version: str) -> tuple[str, ...]:
+    try:
+        return PRETRAIN_SOURCES_BY_VERSION[pretrain_wrapper_version]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported composition.pretrain_wrapper_version: {pretrain_wrapper_version}"
+        ) from exc
+
+
+def _pretrain_frames_for(pretrain_wrapper_version: str) -> tuple[tuple[str, str], ...]:
+    try:
+        return PRETRAIN_FRAMES_BY_VERSION[pretrain_wrapper_version]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported composition.pretrain_wrapper_version: {pretrain_wrapper_version}"
+        ) from exc
+
+
 def _pair_for_direction(
     relation: dict[str, Any],
     direction: Direction,
-) -> tuple[str, str, list[str]]:
-    causes = ", ".join(item["surface"] for item in relation["recipe"])
+    *,
+    cause_order: PretrainCauseOrder,
+    order_key: dict[str, Any] | None,
+) -> tuple[str, str, list[str], list[dict[str, Any]]]:
+    ordered_recipe = _ordered_recipe(relation, cause_order=cause_order, order_key=order_key)
+    causes = ", ".join(item["surface"] for item in ordered_recipe)
     if direction == "forward":
-        return causes, relation["effect_surface"], [relation["effect_id"]]
+        return causes, relation["effect_surface"], [relation["effect_id"]], ordered_recipe
     if direction == "reverse":
-        return relation["effect_surface"], causes, list(relation["recipe_cause_ids"])
+        return (
+            relation["effect_surface"],
+            causes,
+            [item["cause_id"] for item in ordered_recipe],
+            ordered_recipe,
+        )
     raise ValueError(f"Unsupported direction: {direction}")
+
+
+def _ordered_recipe(
+    relation: dict[str, Any],
+    *,
+    cause_order: PretrainCauseOrder,
+    order_key: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    recipe = list(relation["recipe"])
+    if cause_order == "canonical" or len(recipe) < 2:
+        return recipe
+    if cause_order != "random_swap":
+        raise ValueError(f"Unsupported composition.pretrain_cause_order: {cause_order}")
+    if order_key is None:
+        raise ValueError("random_swap pretrain cause order requires an order_key")
+
+    swap_seed = _stable_int(
+        {
+            "cause_order": cause_order,
+            "order_key": order_key,
+        }
+    )
+    if swap_seed % 2 == 0:
+        return recipe
+
+    first_index = (swap_seed // 2) % len(recipe)
+    second_index = (swap_seed // (2 * len(recipe))) % (len(recipe) - 1)
+    if second_index >= first_index:
+        second_index += 1
+    recipe[first_index], recipe[second_index] = recipe[second_index], recipe[first_index]
+    return recipe
 
 
 def _normalize_text(text: str) -> str:

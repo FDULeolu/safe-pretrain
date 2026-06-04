@@ -13,8 +13,10 @@ from safe_pretrain.config import save_config
 from safe_pretrain.synthetic.io import canonical_json_sha256, file_sha256, write_json, write_jsonl
 from safe_pretrain.synthetic.vocab import (
     build_meta_tokens,
+    generate_english_word_effects,
     generate_causes,
     generate_effects,
+    generate_tokenizer_english_words,
     surface_words,
     validate_vocab_disjoint,
 )
@@ -92,10 +94,26 @@ def _build_causes(
     effects: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     source = str(surface_cfg.get("cause_vocab_source", "neutral_words"))
-    if source != "neutral_words":
-        raise ValueError(f"Unsupported surface.cause_vocab_source: {source}")
     effect_words = {word for effect in effects for word in surface_words(effect["surface"])}
-    surfaces = generate_causes(int(world_cfg["num_causes"]), forbidden_words=effect_words)
+    if source == "neutral_words":
+        surfaces = generate_causes(int(world_cfg["num_causes"]), forbidden_words=effect_words)
+    elif source == "tokenizer_english_words":
+        surfaces = generate_tokenizer_english_words(
+            int(world_cfg["num_causes"]),
+            tokenizer_name_or_path=_required_surface_value(
+                surface_cfg,
+                "tokenizer_name_or_path",
+                "surface.tokenizer_name_or_path is required for tokenizer_english_words",
+            ),
+            forbidden_words=effect_words,
+            dictionary_path=surface_cfg.get("english_words_path"),
+            min_chars=int(surface_cfg.get("english_min_chars", 6)),
+            max_chars=int(surface_cfg.get("english_max_chars", 12)),
+            single_token=bool(surface_cfg.get("english_single_token", True)),
+            rank_skip=int(surface_cfg.get("english_rank_skip", 960)),
+        )
+    else:
+        raise ValueError(f"Unsupported surface.cause_vocab_source: {source}")
     return [
         {"cause_id": f"C{index:06d}", "surface": surface}
         for index, surface in enumerate(surfaces)
@@ -104,13 +122,28 @@ def _build_causes(
 
 def _build_effects(world_cfg: dict[str, Any], surface_cfg: dict[str, Any]) -> list[dict[str, Any]]:
     source = str(surface_cfg.get("effect_vocab_source", "generated_phrases"))
-    if source != "generated_phrases":
+    if source == "generated_phrases":
+        raw = generate_effects(
+            int(world_cfg["num_effects"]),
+            use_families=bool(surface_cfg.get("use_families", False)),
+            num_families=surface_cfg.get("num_families"),
+        )
+    elif source == "tokenizer_english_words":
+        raw = generate_english_word_effects(
+            int(world_cfg["num_effects"]),
+            tokenizer_name_or_path=_required_surface_value(
+                surface_cfg,
+                "tokenizer_name_or_path",
+                "surface.tokenizer_name_or_path is required for tokenizer_english_words",
+            ),
+            dictionary_path=surface_cfg.get("english_words_path"),
+            min_chars=int(surface_cfg.get("english_min_chars", 6)),
+            max_chars=int(surface_cfg.get("english_max_chars", 12)),
+            single_token=bool(surface_cfg.get("english_single_token", True)),
+            rank_skip=int(surface_cfg.get("english_rank_skip", 960)),
+        )
+    else:
         raise ValueError(f"Unsupported surface.effect_vocab_source: {source}")
-    raw = generate_effects(
-        int(world_cfg["num_effects"]),
-        use_families=bool(surface_cfg.get("use_families", False)),
-        num_families=surface_cfg.get("num_families"),
-    )
     return [
         {
             "effect_id": f"E{index:06d}",
@@ -119,6 +152,17 @@ def _build_effects(world_cfg: dict[str, Any], surface_cfg: dict[str, Any]) -> li
         }
         for index, item in enumerate(raw)
     ]
+
+
+def _required_surface_value(
+    surface_cfg: dict[str, Any],
+    key: str,
+    message: str,
+) -> str:
+    value = surface_cfg.get(key)
+    if value is None or str(value).lower() in {"", "none", "null"}:
+        raise ValueError(message)
+    return str(value)
 
 
 def _partition_effects(

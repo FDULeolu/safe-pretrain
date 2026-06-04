@@ -1,0 +1,441 @@
+{
+  "chat_template_id": null,
+  "connector_version": "connector_v1",
+  "connectors": [
+    {
+      "connector_id": "listed_with",
+      "forward_text": "is listed with outcome",
+      "reverse_text": "is listed with causes"
+    },
+    {
+      "connector_id": "recorded_with",
+      "forward_text": "is recorded with result",
+      "reverse_text": "is recorded with cause set"
+    },
+    {
+      "connector_id": "associated_with",
+      "forward_text": "is associated with outcome",
+      "reverse_text": "is associated with source items"
+    },
+    {
+      "connector_id": "linked_to",
+      "forward_text": "is linked to result",
+      "reverse_text": "is linked to causes"
+    },
+    {
+      "connector_id": "maps_to",
+      "forward_text": "maps to outcome",
+      "reverse_text": "maps back to causes"
+    },
+    {
+      "connector_id": "corresponds_to",
+      "forward_text": "corresponds to result",
+      "reverse_text": "corresponds to cause set"
+    },
+    {
+      "connector_id": "paired_with",
+      "forward_text": "is paired with outcome",
+      "reverse_text": "is paired with causes"
+    },
+    {
+      "connector_id": "matched_with",
+      "forward_text": "is matched with result",
+      "reverse_text": "is matched with source items"
+    }
+  ],
+  "generator_version": "composition_v1",
+  "pretrain_cause_order": "random_swap",
+  "pretrain_frames": [
+    {
+      "text": "The {source} says {relation}.",
+      "wrapper_id": "source_says"
+    },
+    {
+      "text": "The {source} states {relation}.",
+      "wrapper_id": "source_states"
+    },
+    {
+      "text": "The {source} records {relation}.",
+      "wrapper_id": "source_records"
+    },
+    {
+      "text": "The {source} shows {relation}.",
+      "wrapper_id": "source_shows"
+    },
+    {
+      "text": "The {source} gives this line: {relation}.",
+      "wrapper_id": "source_gives_line"
+    },
+    {
+      "text": "The {source} contains this item: {relation}.",
+      "wrapper_id": "source_contains_item"
+    },
+    {
+      "text": "The {source} has the entry {relation}.",
+      "wrapper_id": "source_has_entry"
+    },
+    {
+      "text": "The {source} presents {relation}.",
+      "wrapper_id": "source_presents"
+    },
+    {
+      "text": "A line in the {source} says {relation}.",
+      "wrapper_id": "line_says"
+    },
+    {
+      "text": "A line in the {source} states {relation}.",
+      "wrapper_id": "line_states"
+    },
+    {
+      "text": "A line in the {source} records {relation}.",
+      "wrapper_id": "line_records"
+    },
+    {
+      "text": "A line in the {source} shows {relation}.",
+      "wrapper_id": "line_shows"
+    },
+    {
+      "text": "A line in the {source} gives this line: {relation}.",
+      "wrapper_id": "line_gives_line"
+    },
+    {
+      "text": "A line in the {source} contains this item: {relation}.",
+      "wrapper_id": "line_contains_item"
+    },
+    {
+      "text": "A line in the {source} has the entry {relation}.",
+      "wrapper_id": "line_has_entry"
+    },
+    {
+      "text": "A line in the {source} presents {relation}.",
+      "wrapper_id": "line_presents"
+    },
+    {
+      "text": "An item in the {source} says {relation}.",
+      "wrapper_id": "item_says"
+    },
+    {
+      "text": "An item in the {source} states {relation}.",
+      "wrapper_id": "item_states"
+    },
+    {
+      "text": "An item in the {source} records {relation}.",
+      "wrapper_id": "item_records"
+    },
+    {
+      "text": "An item in the {source} shows {relation}.",
+      "wrapper_id": "item_shows"
+    },
+    {
+      "text": "An item in the {source} gives this line: {relation}.",
+      "wrapper_id": "item_gives_line"
+    },
+    {
+      "text": "An item in the {source} contains this item: {relation}.",
+      "wrapper_id": "item_contains_item"
+    },
+    {
+      "text": "An item in the {source} has the entry {relation}.",
+      "wrapper_id": "item_has_entry"
+    },
+    {
+      "text": "An item in the {source} presents {relation}.",
+      "wrapper_id": "item_presents"
+    },
+    {
+      "text": "A row on the {source} says {relation}.",
+      "wrapper_id": "row_says"
+    },
+    {
+      "text": "A row on the {source} states {relation}.",
+      "wrapper_id": "row_states"
+    },
+    {
+      "text": "A row on the {source} records {relation}.",
+      "wrapper_id": "row_records"
+    },
+    {
+      "text": "A row on the {source} shows {relation}.",
+      "wrapper_id": "row_shows"
+    },
+    {
+      "text": "A row on the {source} gives this line: {relation}.",
+      "wrapper_id": "row_gives_line"
+    },
+    {
+      "text": "A row on the {source} contains this item: {relation}.",
+      "wrapper_id": "row_contains_item"
+    },
+    {
+      "text": "A row on the {source} has the entry {relation}.",
+      "wrapper_id": "row_has_entry"
+    },
+    {
+      "text": "A row on the {source} presents {relation}.",
+      "wrapper_id": "row_presents"
+    },
+    {
+      "text": "The marked line in the {source} says {relation}.",
+      "wrapper_id": "marked_line_says"
+    },
+    {
+      "text": "The marked line in the {source} states {relation}.",
+      "wrapper_id": "marked_line_states"
+    },
+    {
+      "text": "The marked line in the {source} records {relation}.",
+      "wrapper_id": "marked_line_records"
+    },
+    {
+      "text": "The marked line in the {source} shows {relation}.",
+      "wrapper_id": "marked_line_shows"
+    },
+    {
+      "text": "The marked line in the {source} gives this line: {relation}.",
+      "wrapper_id": "marked_line_gives_line"
+    },
+    {
+      "text": "The marked line in the {source} contains this item: {relation}.",
+      "wrapper_id": "marked_line_contains_item"
+    },
+    {
+      "text": "The marked line in the {source} has the entry {relation}.",
+      "wrapper_id": "marked_line_has_entry"
+    },
+    {
+      "text": "The marked line in the {source} presents {relation}.",
+      "wrapper_id": "marked_line_presents"
+    },
+    {
+      "text": "The listed item in the {source} says {relation}.",
+      "wrapper_id": "listed_item_says"
+    },
+    {
+      "text": "The listed item in the {source} states {relation}.",
+      "wrapper_id": "listed_item_states"
+    },
+    {
+      "text": "The listed item in the {source} records {relation}.",
+      "wrapper_id": "listed_item_records"
+    },
+    {
+      "text": "The listed item in the {source} shows {relation}.",
+      "wrapper_id": "listed_item_shows"
+    },
+    {
+      "text": "The listed item in the {source} gives this line: {relation}.",
+      "wrapper_id": "listed_item_gives_line"
+    },
+    {
+      "text": "The listed item in the {source} contains this item: {relation}.",
+      "wrapper_id": "listed_item_contains_item"
+    },
+    {
+      "text": "The listed item in the {source} has the entry {relation}.",
+      "wrapper_id": "listed_item_has_entry"
+    },
+    {
+      "text": "The listed item in the {source} presents {relation}.",
+      "wrapper_id": "listed_item_presents"
+    },
+    {
+      "text": "A stored item from the {source} says {relation}.",
+      "wrapper_id": "stored_item_says"
+    },
+    {
+      "text": "A stored item from the {source} states {relation}.",
+      "wrapper_id": "stored_item_states"
+    },
+    {
+      "text": "A stored item from the {source} records {relation}.",
+      "wrapper_id": "stored_item_records"
+    },
+    {
+      "text": "A stored item from the {source} shows {relation}.",
+      "wrapper_id": "stored_item_shows"
+    },
+    {
+      "text": "A stored item from the {source} gives this line: {relation}.",
+      "wrapper_id": "stored_item_gives_line"
+    },
+    {
+      "text": "A stored item from the {source} contains this item: {relation}.",
+      "wrapper_id": "stored_item_contains_item"
+    },
+    {
+      "text": "A stored item from the {source} has the entry {relation}.",
+      "wrapper_id": "stored_item_has_entry"
+    },
+    {
+      "text": "A stored item from the {source} presents {relation}.",
+      "wrapper_id": "stored_item_presents"
+    },
+    {
+      "text": "The noted item on the {source} says {relation}.",
+      "wrapper_id": "noted_item_says"
+    },
+    {
+      "text": "The noted item on the {source} states {relation}.",
+      "wrapper_id": "noted_item_states"
+    },
+    {
+      "text": "The noted item on the {source} records {relation}.",
+      "wrapper_id": "noted_item_records"
+    },
+    {
+      "text": "The noted item on the {source} shows {relation}.",
+      "wrapper_id": "noted_item_shows"
+    },
+    {
+      "text": "The noted item on the {source} gives this line: {relation}.",
+      "wrapper_id": "noted_item_gives_line"
+    },
+    {
+      "text": "The noted item on the {source} contains this item: {relation}.",
+      "wrapper_id": "noted_item_contains_item"
+    },
+    {
+      "text": "The noted item on the {source} has the entry {relation}.",
+      "wrapper_id": "noted_item_has_entry"
+    },
+    {
+      "text": "The noted item on the {source} presents {relation}.",
+      "wrapper_id": "noted_item_presents"
+    }
+  ],
+  "pretrain_key_space": 65536,
+  "pretrain_sources": [
+    "archive note",
+    "archive row",
+    "archive card",
+    "archive page",
+    "archive sheet",
+    "archive line",
+    "archive entry",
+    "archive memo",
+    "catalog note",
+    "catalog row",
+    "catalog card",
+    "catalog page",
+    "catalog sheet",
+    "catalog line",
+    "catalog entry",
+    "catalog memo",
+    "registry note",
+    "registry row",
+    "registry card",
+    "registry page",
+    "registry sheet",
+    "registry line",
+    "registry entry",
+    "registry memo",
+    "reference note",
+    "reference row",
+    "reference card",
+    "reference page",
+    "reference sheet",
+    "reference line",
+    "reference entry",
+    "reference memo",
+    "index note",
+    "index row",
+    "index card",
+    "index page",
+    "index sheet",
+    "index line",
+    "index entry",
+    "index memo",
+    "ledger note",
+    "ledger row",
+    "ledger card",
+    "ledger page",
+    "ledger sheet",
+    "ledger line",
+    "ledger entry",
+    "ledger memo",
+    "table note",
+    "table row",
+    "table card",
+    "table page",
+    "table sheet",
+    "table line",
+    "table entry",
+    "table memo",
+    "record note",
+    "record row",
+    "record card",
+    "record page",
+    "record sheet",
+    "record line",
+    "record entry",
+    "record memo",
+    "field note",
+    "field row",
+    "field card",
+    "field page",
+    "field sheet",
+    "field line",
+    "field entry",
+    "field memo",
+    "data note",
+    "data row",
+    "data card",
+    "data page",
+    "data sheet",
+    "data line",
+    "data entry",
+    "data memo",
+    "lookup note",
+    "lookup row",
+    "lookup card",
+    "lookup page",
+    "lookup sheet",
+    "lookup line",
+    "lookup entry",
+    "lookup memo",
+    "summary note",
+    "summary row",
+    "summary card",
+    "summary page",
+    "summary sheet",
+    "summary line",
+    "summary entry",
+    "summary memo",
+    "filing note",
+    "filing row",
+    "filing card",
+    "filing page",
+    "filing sheet",
+    "filing line",
+    "filing entry",
+    "filing memo",
+    "inventory note",
+    "inventory row",
+    "inventory card",
+    "inventory page",
+    "inventory sheet",
+    "inventory line",
+    "inventory entry",
+    "inventory memo",
+    "dossier note",
+    "dossier row",
+    "dossier card",
+    "dossier page",
+    "dossier sheet",
+    "dossier line",
+    "dossier entry",
+    "dossier memo",
+    "notebook note",
+    "notebook row",
+    "notebook card",
+    "notebook page",
+    "notebook sheet",
+    "notebook line",
+    "notebook entry",
+    "notebook memo"
+  ],
+  "pretrain_wrapper_version": "pretrain_descriptive_v2",
+  "sft_frames": null,
+  "sft_key_space": null,
+  "sft_wrapper_version": null
+}

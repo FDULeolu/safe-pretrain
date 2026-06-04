@@ -378,6 +378,7 @@ class _PromptRenderer:
             pretrain_wrapper_version=str(
                 composition.get("pretrain_wrapper_version") or "pretrain_descriptive_v1"
             ),
+            pretrain_cause_order=str(composition.get("pretrain_cause_order") or "canonical"),
             sft_wrapper_version="sft_chat_qa_v1",
             chat_template_id="smollm2_chatml_v1",
         )
@@ -394,14 +395,14 @@ class _PromptRenderer:
         recipe: list[str],
         mode: str,
     ) -> tuple[str, str]:
-        if mode == "forward":
-            gold = relation["effect_surface"]
-        elif mode == "reverse":
-            gold = ", ".join(recipe)
-        else:
+        if mode not in {"forward", "reverse"}:
             raise ValueError(f"Unsupported eval mode: {mode}")
 
         if self.kind == "templates":
+            if mode == "forward":
+                gold = relation["effect_surface"]
+            else:
+                gold = ", ".join(recipe)
             template = self.forward_template if mode == "forward" else self.reverse_template
             if template is None:
                 raise ValueError(f"Missing template for eval mode: {mode}")
@@ -423,6 +424,7 @@ class _PromptRenderer:
             )
             self.record_index += 1
             rendered = str(composition.text)
+            gold = str(composition.metadata["answer_text"])
 
         prompt = _split_prompt(rendered, gold)
         return prompt, gold

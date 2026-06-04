@@ -11,12 +11,12 @@ cd "${ROOT_DIR}"
 CONFIG="configs/pretrain_a6000_smollm2_135m.yaml"
 
 # Dataset knobs.
-DATASET_ROOT="/data3/yizhou/projects/safe-pretrain/data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_2arity_strict_wo_overlap/pretrain/0.25reverse_0.99train_composition_v1"
+DATASET_ROOT="/data3/yizhou/projects/safe-pretrain/data/worlds/synthetic_world_1024effects_2048causes_0.1restricted_2arity_strict_wo_overlap_dic-words/pretrain/0.45reverse_0.99train_composition_v1_pretrain_descriptive_v2_random_swap"
 BLOCK_SIZE=512
 TOKENIZED_PATH="${DATASET_ROOT}/tokenized/bs${BLOCK_SIZE}"
 
 # Run identity.
-EXPERIMENT_NAME="smollm2-135m-scratch-0p3b-1epoch-bs${BLOCK_SIZE}-synthetic_world_4096effects_8192causes_0.5restricted_2arity_strict_wo_overlap/pretrain/0.25reverse_0.99train_composition_v1"
+EXPERIMENT_NAME="smollm2-135m-scratch-0p3b-1epoch-bs${BLOCK_SIZE}-synthetic_world_1024effects_2048causes_0.1restricted_2arity_strict_wo_overlap_dic-words/pretrain/0.45reverse_0.99train_composition_v1_pretrain_descriptive_v2_random_swap_small-batch"
 WANDB_ENABLED="true"
 
 # Hardware.
@@ -25,9 +25,9 @@ MIXED_PRECISION="bf16"
 
 # Batch sizing.
 # Global tokens/update = num_gpus * per_device_batch_size * grad_accum * block_size.
-# With 4 GPUs, batch 128, grad_accum 1, block 512: 262,144 tokens/update.
+# With 4 GPUs, batch 64, grad_accum 1, block 512: 131,072 tokens/update.
 PER_DEVICE_BATCH_SIZE=64
-GRADIENT_ACCUMULATION_STEPS=2
+GRADIENT_ACCUMULATION_STEPS=1
 
 # Optimizer/schedule. SmolLM2 reports AdamW-style pretraining, weight decay 0.1,
 # cosine/WSD schedules around 3e-4 to 5e-4 depending on stage. We use the

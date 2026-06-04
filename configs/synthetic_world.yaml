@@ -10,6 +10,12 @@ world:
 surface:
   cause_vocab_source: neutral_words
   effect_vocab_source: generated_phrases
+  tokenizer_name_or_path: null
+  english_words_path: /usr/share/dict/words
+  english_min_chars: 6
+  english_max_chars: 12
+  english_single_token: true
+  english_rank_skip: 960
   use_families: false
   family_definition: none
   num_families: null
