@@ -100,7 +100,7 @@ bash scripts/bash/render_pretrain_data.sh
 This writes:
 
 ```text
-data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/0.0reverse_0.99train_composition_v1/
+data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/open_0.35forward_0.35reverse_0.3bi_0.99train_composition_v1_pretrain_descriptive_v2_random_swap/
   composition_manifest.json
   experiment_splits.json
   pretrain_train.jsonl
@@ -115,14 +115,14 @@ evaluation data should all reference the same `world_id`. The fixed world stores
 the open/restricted oracle partition; train/validation and experiment-specific
 target assignments are rendered-dataset metadata.
 
-Pretrain render controls corpus size, train/validation split, the `forward`
-versus `reverse` sentence ratio, and the pretrain-only cause order policy. The
-base corpus preserves the world's open/restricted partition ratio, then
-selected open records are rendered as `reverse`. `reverse_ratio` cannot exceed
-the world's open relation ratio, so restricted reverse records do not leak into
-pretraining. `composition.pretrain_cause_order=random_swap` deterministically
-swaps two cause positions on a per-record basis for both forward and open
-reverse pretrain records; SFT rendering remains canonical unless changed
+Pretrain render controls corpus size, train/validation split, the open-relation
+pattern mix, and the pretrain-only cause order policy. By default, open records
+are sampled from `forward`, `reverse`, and `bidirectional`; restricted records
+remain `forward` only. A bidirectional pretrain record is a single synthetic
+chain such as `cause connector effect connector cause`, so the forward and
+reverse forms appear in the same LM sample without an EOS boundary between them.
+`composition.pretrain_cause_order=random_swap` deterministically swaps two cause
+positions on a per-record basis; SFT rendering remains canonical unless changed
 separately.
 
 Render chat-format SFT QA data from the same fixed world:
@@ -150,7 +150,7 @@ Pretrain and SFT share the same connector vocabulary but use different wrappers.
 The allowed exposure matrix is:
 
 ```text
-pretrain: forward_open, forward_restricted, optional reverse_open
+pretrain: forward_open, forward_restricted, reverse_open, bidirectional_open
 sft train/validation/test_safe: forward_open, forward_restricted, reverse_open
 attack eval: reverse_restricted
 ```
@@ -167,7 +167,7 @@ python scripts/python/tokenize_dataset.py \
 This writes a packed Hugging Face dataset to:
 
 ```text
-data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/0.0reverse_0.99train_composition_v1/tokenized/bs2048
+data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/open_0.35forward_0.35reverse_0.3bi_0.99train_composition_v1_pretrain_descriptive_v2_random_swap/tokenized/bs2048
 ```
 
 The training loop consumes fixed-size token blocks, so it does not run the

@@ -1,5 +1,5 @@
 render:
-  name: ${pretrain.reverse_ratio}reverse_${pretrain.train_fraction}train_${composition.generator_version}_${composition.pretrain_wrapper_version}_${composition.pretrain_cause_order}
+  name: open_${pretrain.open_pattern_weights.forward}forward_${pretrain.open_pattern_weights.reverse}reverse_${pretrain.open_pattern_weights.bidirectional}bi_${pretrain.train_fraction}train_${composition.generator_version}_${composition.pretrain_wrapper_version}_${composition.pretrain_cause_order}
   seed: 123
   output_dir: data/worlds/${world.name}/pretrain/${render.name}
   overwrite: false
@@ -26,6 +26,18 @@ pretrain:
   estimated_tokens_per_record: 24
   train_fraction: 0.99
   validation_fraction: 0.01
+  # New pattern-weight path. These weights are conditional on relation
+  # partition: open relations can render forward/reverse/bidirectional records;
+  # restricted relations remain forward-only.
+  open_pattern_weights:
+    forward: 0.35
+    reverse: 0.35
+    bidirectional: 0.30
+  restricted_pattern_weights:
+    forward: 1.0
+    reverse: 0.0
+    bidirectional: 0.0
+  # Legacy fallback used only when open_pattern_weights is absent.
   reverse_ratio: 0.0
 
 composition:
@@ -33,10 +45,14 @@ composition:
   connector_version: connector_v1
   pretrain_wrapper_version: pretrain_descriptive_v2
   pretrain_cause_order: random_swap
+  bidirectional_order_weights:
+    forward_first: 0.5
+    reverse_first: 0.5
 
 audit:
   assert_stage2_rendering_valid: true
   assert_no_restricted_reverse_in_pretrain: true
+  assert_no_restricted_bidirectional_in_pretrain: true
   assert_no_metadata_id_in_text: true
   assert_unique_template_key_per_relation: true
   write_audit_json: true

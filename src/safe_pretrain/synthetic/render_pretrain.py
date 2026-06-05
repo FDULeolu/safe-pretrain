@@ -66,10 +66,6 @@ def render_pretrain_dataset(
         if not math.isclose(train_fraction + validation_fraction, 1.0, rel_tol=0.0, abs_tol=1e-6):
             raise ValueError("pretrain.train_fraction + pretrain.validation_fraction must equal 1.0")
 
-    reverse_ratio = float(pretrain_cfg.get("reverse_ratio", 0.0))
-    if not 0 <= reverse_ratio <= 1:
-        raise ValueError("pretrain.reverse_ratio must be in [0, 1]")
-
     relations = world["relations"]
     open_relations = [relation for relation in relations if relation["partition"] == "open"]
     restricted_relations = [
@@ -77,14 +73,11 @@ def render_pretrain_dataset(
     ]
     if not relations:
         raise ValueError("World has no relations")
-    open_ratio = len(open_relations) / len(relations)
-    if reverse_ratio > open_ratio:
-        raise ValueError(
-            "pretrain.reverse_ratio cannot exceed the world's open relation ratio "
-            f"({reverse_ratio:.6f} > {open_ratio:.6f})"
-        )
-    if reverse_ratio > 0 and not open_relations:
-        raise ValueError("pretrain.reverse_ratio > 0 but the world has no open effects")
+    pattern_policy = _build_pretrain_pattern_policy(
+        pretrain_cfg,
+        open_relations=open_relations,
+        restricted_relations=restricted_relations,
+    )
 
     token_budget = _token_budget_config(pretrain_cfg)
     token_budget_audit: dict[str, Any] = {"enabled": False}
@@ -95,7 +88,7 @@ def render_pretrain_dataset(
             composition_cfg=composition_cfg,
             open_relations=open_relations,
             restricted_relations=restricted_relations,
-            reverse_ratio=reverse_ratio,
+            pattern_policy=pattern_policy,
             train_fraction=train_fraction,
             validation_fraction=validation_fraction,
             seed=seed,
@@ -116,7 +109,7 @@ def render_pretrain_dataset(
             composition_cfg=composition_cfg,
             open_relations=open_relations,
             restricted_relations=restricted_relations,
-            reverse_ratio=reverse_ratio,
+            pattern_policy=pattern_policy,
             train_fraction=train_fraction,
             validation_fraction=validation_fraction,
             seed=seed,
@@ -127,9 +120,7 @@ def render_pretrain_dataset(
     if total_records is not None:
         _assert_record_capacity(
             total_records,
-            open_relations=open_relations,
-            restricted_relations=restricted_relations,
-            reverse_ratio=reverse_ratio,
+            pattern_policy=pattern_policy,
             key_space_size=generator.pretrain_key_space_size,
         )
 
@@ -153,7 +144,7 @@ def render_pretrain_dataset(
                 generator=generator,
                 world_id=world["manifest"]["world_id"],
                 render_id=render_id,
-                reverse_ratio=reverse_ratio,
+                pattern_policy=pattern_policy,
                 train_fraction=train_fraction,
                 validation_fraction=validation_fraction,
                 seed=seed,
@@ -164,38 +155,37 @@ def render_pretrain_dataset(
         else:
             if total_records is None:
                 raise AssertionError("total_records should be resolved before fixed-record rendering")
-            validation_indices = _validation_indices(
-                total_records,
-                train_fraction=train_fraction,
-                validation_fraction=validation_fraction,
-                seed=seed + 1,
-            )
-            sampled_relations, open_positions = _partitioned_relation_sequence(
+            relation_sampler = _PretrainRelationPatternSampler(
                 open_relations,
                 restricted_relations,
-                total_records,
+                pattern_policy=pattern_policy,
                 seed=seed + 2,
             )
-            reverse_indices = _reverse_indices_from_open_positions(
-                open_positions,
-                total_records=total_records,
-                reverse_ratio=reverse_ratio,
-                seed=seed + 5,
+            split_sampler = _WeightedCycleSampler(
+                [
+                    ("train", train_fraction),
+                    (
+                        "validation",
+                        1.0 - train_fraction
+                        if validation_fraction is None
+                        else validation_fraction,
+                    ),
+                ],
+                random.Random(seed + 1),
             )
             for record_index in tqdm(
                 range(total_records),
                 desc="Rendering pretrain records",
                 unit="record",
             ):
-                relation = sampled_relations[record_index]
-                direction = "reverse" if record_index in reverse_indices else "forward"
-                split = "validation" if record_index in validation_indices else "train"
+                relation, pattern = relation_sampler.next()
+                split = split_sampler.next()
                 composition = generator.compose_pretrain(
                     relation,
                     world_id=world["manifest"]["world_id"],
                     render_id=render_id,
                     record_index=record_index,
-                    direction=direction,
+                    direction=pattern,
                     split=split,
                 )
                 row = {"text": composition.text, "metadata": composition.metadata}
@@ -230,6 +220,7 @@ def render_pretrain_dataset(
         }
     elif token_budget:
         audit["token_budget"] = token_budget_audit
+    audit["pretrain_pattern_policy"] = pattern_policy
     audit["experiment_split_counts"] = {
         group: {name: len(ids) for name, ids in values.items()}
         for group, values in experiment_splits.items()
@@ -254,6 +245,8 @@ def render_pretrain_dataset(
         },
         "counts": audit["counts"],
         "direction_counts": audit["direction_counts"],
+        "pretrain_pattern_counts": audit["pretrain_pattern_counts"],
+        "bidirectional_order_counts": audit["bidirectional_order_counts"],
         "connector_counts": audit["connector_counts"],
         "wrapper_counts": audit["wrapper_counts"],
         "rendered_cause_order_counts": audit["rendered_cause_order_counts"],
@@ -261,6 +254,7 @@ def render_pretrain_dataset(
         "partition_counts": audit["partition_counts"],
         "token_counts": audit.get("token_counts", {}),
         "token_budget": audit.get("token_budget", {"enabled": False}),
+        "pretrain_pattern_policy": audit["pretrain_pattern_policy"],
     }
     write_json(output_path / "render_manifest.json", manifest)
     write_json(output_path / "checksums.json", _checksums(output_path, manifest["files"].values()))
@@ -272,6 +266,8 @@ class _Stats:
         self.counts = Counter()
         self.partitions = Counter()
         self.directions = Counter()
+        self.pretrain_patterns = Counter()
+        self.bidirectional_orders = Counter()
         self.connectors = Counter()
         self.wrappers = Counter()
         self.rendered_cause_orders = Counter()
@@ -281,6 +277,7 @@ class _Stats:
         self.template_keys_by_relation: dict[str, set[tuple[str, str]]] = defaultdict(set)
         self.reverse_effect_ids: set[str] = set()
         self.restricted_reverse_records = 0
+        self.restricted_bidirectional_records = 0
         self.metadata_id_in_text = 0
         self.duplicate_template_keys = 0
         self.token_counts = Counter()
@@ -291,6 +288,10 @@ class _Stats:
         self.counts[metadata["split"]] += 1
         self.partitions[metadata["partition"]] += 1
         self.directions[metadata["direction"]] += 1
+        pattern = metadata.get("pretrain_pattern", metadata["direction"])
+        self.pretrain_patterns[pattern] += 1
+        if pattern == "bidirectional":
+            self.bidirectional_orders[metadata.get("bidirectional_order", "unknown")] += 1
         self.connectors[metadata["connector_id"]] += 1
         self.wrappers[metadata["wrapper_id"]] += 1
         self.rendered_cause_orders[metadata.get("rendered_cause_order", "canonical")] += 1
@@ -305,10 +306,12 @@ class _Stats:
             self.duplicate_template_keys += 1
         else:
             relation_keys.add(template_key)
-        if metadata["direction"] == "reverse":
+        if pattern in {"reverse", "bidirectional"}:
             self.reverse_effect_ids.add(metadata["effect_id"])
-        if metadata["partition"] == "restricted" and metadata["direction"] == "reverse":
+        if metadata["partition"] == "restricted" and pattern in {"reverse", "bidirectional"}:
             self.restricted_reverse_records += 1
+        if metadata["partition"] == "restricted" and pattern == "bidirectional":
+            self.restricted_bidirectional_records += 1
         if _metadata_visible_in_text(row["text"], metadata):
             self.metadata_id_in_text += 1
         if token_count is not None:
@@ -325,6 +328,8 @@ class _Stats:
             "token_counts": dict(self.token_counts),
             "partition_counts": dict(self.partitions),
             "direction_counts": dict(self.directions),
+            "pretrain_pattern_counts": dict(self.pretrain_patterns),
+            "bidirectional_order_counts": dict(self.bidirectional_orders),
             "connector_counts": dict(self.connectors),
             "wrapper_counts": dict(self.wrappers),
             "rendered_cause_order_counts": dict(self.rendered_cause_orders),
@@ -345,6 +350,7 @@ class _Stats:
                 ),
             },
             "restricted_reverse_records": self.restricted_reverse_records,
+            "restricted_bidirectional_records": self.restricted_bidirectional_records,
             "metadata_id_in_text_records": self.metadata_id_in_text,
             "duplicate_template_keys_per_relation": self.duplicate_template_keys,
         }
@@ -368,9 +374,125 @@ def _build_composition_generator(composition_cfg: dict[str, Any]) -> Composition
             composition_cfg.get("pretrain_wrapper_version", "pretrain_descriptive_v1")
         ),
         pretrain_cause_order=str(composition_cfg.get("pretrain_cause_order", "canonical")),
+        bidirectional_order_weights=composition_cfg.get("bidirectional_order_weights"),
         sft_wrapper_version=str(composition_cfg.get("sft_wrapper_version", "sft_chat_qa_v1")),
         chat_template_id=str(composition_cfg.get("chat_template_id", "smollm2_chatml_v1")),
     )
+
+
+def _build_pretrain_pattern_policy(
+    pretrain_cfg: dict[str, Any],
+    *,
+    open_relations: list[dict[str, Any]],
+    restricted_relations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    relations = open_relations + restricted_relations
+    if not relations:
+        raise ValueError("Cannot render pretrain data from an empty relation table")
+    open_ratio = len(open_relations) / len(relations)
+    restricted_ratio = len(restricted_relations) / len(relations)
+    categories: list[dict[str, Any]] = []
+
+    open_pattern_weights = pretrain_cfg.get("open_pattern_weights")
+    if open_pattern_weights is None:
+        reverse_ratio = float(pretrain_cfg.get("reverse_ratio", 0.0))
+        if not 0 <= reverse_ratio <= 1:
+            raise ValueError("pretrain.reverse_ratio must be in [0, 1]")
+        if reverse_ratio > open_ratio:
+            raise ValueError(
+                "pretrain.reverse_ratio cannot exceed the world's open relation ratio "
+                f"({reverse_ratio:.6f} > {open_ratio:.6f})"
+            )
+        if reverse_ratio > 0 and not open_relations:
+            raise ValueError("pretrain.reverse_ratio > 0 but the world has no open effects")
+        open_weights = {
+            "forward": (open_ratio - reverse_ratio) / open_ratio if open_ratio > 0 else 0.0,
+            "reverse": reverse_ratio / open_ratio if open_ratio > 0 else 0.0,
+            "bidirectional": 0.0,
+        }
+        mode = "legacy_reverse_ratio"
+    else:
+        open_weights = _normalize_pattern_weights(
+            open_pattern_weights,
+            context="pretrain.open_pattern_weights",
+        )
+        mode = "pattern_weights"
+
+    if open_relations:
+        for pattern, conditional_weight in open_weights.items():
+            if conditional_weight > 0:
+                categories.append(
+                    {
+                        "category": f"open_{pattern}",
+                        "partition": "open",
+                        "pattern": pattern,
+                        "weight": open_ratio * conditional_weight,
+                        "num_relations": len(open_relations),
+                    }
+                )
+
+    restricted_weights = _normalize_pattern_weights(
+        pretrain_cfg.get("restricted_pattern_weights") or {"forward": 1.0},
+        context="pretrain.restricted_pattern_weights",
+    )
+    unsafe_restricted = {
+        pattern: weight
+        for pattern, weight in restricted_weights.items()
+        if pattern in {"reverse", "bidirectional"} and weight > 0
+    }
+    if unsafe_restricted:
+        raise ValueError(
+            "restricted pretrain pattern weights may only include forward; got "
+            f"{unsafe_restricted}"
+        )
+    if restricted_relations and restricted_weights["forward"] > 0:
+        categories.append(
+            {
+                "category": "restricted_forward",
+                "partition": "restricted",
+                "pattern": "forward",
+                "weight": restricted_ratio * restricted_weights["forward"],
+                "num_relations": len(restricted_relations),
+            }
+        )
+
+    categories = _normalize_policy_categories(categories)
+    if not categories:
+        raise ValueError("Pretrain pattern policy has no positive-weight categories")
+    return {
+        "mode": mode,
+        "open_pattern_weights": open_weights,
+        "restricted_pattern_weights": restricted_weights,
+        "categories": categories,
+    }
+
+
+def _normalize_pattern_weights(raw: dict[str, Any], *, context: str) -> dict[str, float]:
+    allowed = {"forward", "reverse", "bidirectional"}
+    unknown = set(raw) - allowed
+    if unknown:
+        raise ValueError(f"Unsupported {context} keys: {sorted(unknown)}")
+    weights = {pattern: float(raw.get(pattern, 0.0)) for pattern in sorted(allowed)}
+    if any(weight < 0 for weight in weights.values()):
+        raise ValueError(f"{context} values must be non-negative")
+    total = sum(weights.values())
+    if total <= 0:
+        raise ValueError(f"{context} needs at least one positive value")
+    return {pattern: weight / total for pattern, weight in weights.items()}
+
+
+def _normalize_policy_categories(categories: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    total = sum(float(category["weight"]) for category in categories)
+    if total <= 0:
+        return []
+    return [
+        {
+            **category,
+            "weight": float(category["weight"]) / total,
+        }
+        for category in categories
+        if float(category["weight"]) > 0
+    ]
 
 
 def _build_experiment_splits(
@@ -464,7 +586,7 @@ def _estimate_records_for_token_budget(
     composition_cfg: dict[str, Any],
     open_relations: list[dict[str, Any]],
     restricted_relations: list[dict[str, Any]],
-    reverse_ratio: float,
+    pattern_policy: dict[str, Any],
     train_fraction: float,
     validation_fraction: float | None,
     seed: int,
@@ -474,7 +596,7 @@ def _estimate_records_for_token_budget(
         composition_cfg=composition_cfg,
         open_relations=open_relations,
         restricted_relations=restricted_relations,
-        reverse_ratio=reverse_ratio,
+        pattern_policy=pattern_policy,
         train_fraction=train_fraction,
         validation_fraction=validation_fraction,
         seed=seed,
@@ -493,10 +615,8 @@ def _estimate_records_for_token_budget(
         / tokens_per_total_record
         * float(token_budget["record_safety_margin"])
     )
-    max_records = _max_records_without_template_reuse(
-        open_relations=open_relations,
-        restricted_relations=restricted_relations,
-        reverse_ratio=reverse_ratio,
+    max_records = _max_records_without_template_reuse_for_policy(
+        pattern_policy=pattern_policy,
         key_space_size=_build_composition_generator(composition_cfg).pretrain_key_space_size,
     )
     estimated_max_tokens = math.floor(max_records * tokens_per_total_record)
@@ -535,7 +655,7 @@ def _assert_token_budget_capacity_estimate(
     composition_cfg: dict[str, Any],
     open_relations: list[dict[str, Any]],
     restricted_relations: list[dict[str, Any]],
-    reverse_ratio: float,
+    pattern_policy: dict[str, Any],
     train_fraction: float,
     validation_fraction: float | None,
     seed: int,
@@ -545,7 +665,7 @@ def _assert_token_budget_capacity_estimate(
         composition_cfg=composition_cfg,
         open_relations=open_relations,
         restricted_relations=restricted_relations,
-        reverse_ratio=reverse_ratio,
+        pattern_policy=pattern_policy,
         train_fraction=train_fraction,
         validation_fraction=validation_fraction,
         seed=seed,
@@ -558,7 +678,7 @@ def _sample_token_budget(
     composition_cfg: dict[str, Any],
     open_relations: list[dict[str, Any]],
     restricted_relations: list[dict[str, Any]],
-    reverse_ratio: float,
+    pattern_policy: dict[str, Any],
     train_fraction: float,
     validation_fraction: float | None,
     seed: int,
@@ -568,10 +688,10 @@ def _sample_token_budget(
         trust_remote_code=bool(token_budget["trust_remote_code"]),
     )
     generator = _build_composition_generator(composition_cfg)
-    relation_sampler = _PretrainRelationDirectionSampler(
+    relation_sampler = _PretrainRelationPatternSampler(
         open_relations,
         restricted_relations,
-        reverse_ratio=reverse_ratio,
+        pattern_policy=pattern_policy,
         seed=seed + 2,
     )
     split_sampler = _WeightedCycleSampler(
@@ -590,14 +710,14 @@ def _sample_token_budget(
         current_batch_size = min(batch_size, remaining)
         batch: list[dict[str, Any]] = []
         for _ in range(current_batch_size):
-            relation, direction = relation_sampler.next()
+            relation, pattern = relation_sampler.next()
             split = split_sampler.next()
             composition = generator.compose_pretrain(
                 relation,
                 world_id="token-budget-estimate-world",
                 render_id="token-budget-estimate-render",
                 record_index=record_index,
-                direction=direction,
+                direction=pattern,
                 split=split,
             )
             batch.append({"text": composition.text, "metadata": composition.metadata})
@@ -622,7 +742,7 @@ def _render_token_budget_records(
     generator: CompositionGenerator,
     world_id: str,
     render_id: str,
-    reverse_ratio: float,
+    pattern_policy: dict[str, Any],
     train_fraction: float,
     validation_fraction: float | None,
     seed: int,
@@ -634,10 +754,10 @@ def _render_token_budget_records(
         token_budget["tokenizer_name_or_path"],
         trust_remote_code=bool(token_budget["trust_remote_code"]),
     )
-    relation_sampler = _PretrainRelationDirectionSampler(
+    relation_sampler = _PretrainRelationPatternSampler(
         open_relations,
         restricted_relations,
-        reverse_ratio=reverse_ratio,
+        pattern_policy=pattern_policy,
         seed=seed + 2,
     )
     split_sampler = _WeightedCycleSampler(
@@ -656,14 +776,14 @@ def _render_token_budget_records(
         while stats.token_counts[target_key] < target_tokens:
             batch: list[dict[str, Any]] = []
             for _ in range(batch_size):
-                relation, direction = relation_sampler.next()
+                relation, pattern = relation_sampler.next()
                 split = split_sampler.next()
                 composition = generator.compose_pretrain(
                     relation,
                     world_id=world_id,
                     render_id=render_id,
                     record_index=record_index,
-                    direction=direction,
+                    direction=pattern,
                     split=split,
                 )
                 batch.append({"text": composition.text, "metadata": composition.metadata})
@@ -700,15 +820,11 @@ def _token_count_key(target_split: str) -> str:
 def _assert_record_capacity(
     total_records: int,
     *,
-    open_relations: list[dict[str, Any]],
-    restricted_relations: list[dict[str, Any]],
-    reverse_ratio: float,
+    pattern_policy: dict[str, Any],
     key_space_size: int,
 ) -> None:
-    max_records = _max_records_without_template_reuse(
-        open_relations=open_relations,
-        restricted_relations=restricted_relations,
-        reverse_ratio=reverse_ratio,
+    max_records = _max_records_without_template_reuse_for_policy(
+        pattern_policy=pattern_policy,
         key_space_size=key_space_size,
     )
     if total_records > max_records:
@@ -742,6 +858,24 @@ def _max_records_without_template_reuse(
     if restricted_ratio > 0:
         category_limits.append(
             math.floor(len(restricted_relations) * key_space_size / restricted_ratio)
+        )
+    if not category_limits:
+        return 0
+    return min(category_limits)
+
+
+def _max_records_without_template_reuse_for_policy(
+    *,
+    pattern_policy: dict[str, Any],
+    key_space_size: int,
+) -> int:
+    category_limits = []
+    for category in pattern_policy["categories"]:
+        weight = float(category["weight"])
+        if weight <= 0:
+            continue
+        category_limits.append(
+            math.floor(int(category["num_relations"]) * key_space_size / weight)
         )
     if not category_limits:
         return 0
@@ -789,47 +923,41 @@ class _WeightedCycleSampler:
         self.index = 0
 
 
-class _PretrainRelationDirectionSampler:
+class _PretrainRelationPatternSampler:
     def __init__(
         self,
         open_relations: list[dict[str, Any]],
         restricted_relations: list[dict[str, Any]],
         *,
-        reverse_ratio: float,
+        pattern_policy: dict[str, Any],
         seed: int,
     ) -> None:
         relations = open_relations + restricted_relations
         if not relations:
             raise ValueError("Cannot render pretrain data from an empty relation table")
-        open_ratio = len(open_relations) / len(relations)
-        if reverse_ratio > open_ratio:
-            raise ValueError(
-                "pretrain.reverse_ratio cannot exceed the world's open relation ratio "
-                f"({reverse_ratio:.6f} > {open_ratio:.6f})"
-            )
-        categories: list[tuple[str, float]] = []
         self.samplers: dict[str, _RelationSampler] = {}
-        open_forward_ratio = open_ratio - reverse_ratio
-        restricted_ratio = len(restricted_relations) / len(relations)
-        if reverse_ratio > 0:
-            self.samplers["open_reverse"] = _RelationSampler(open_relations, random.Random(seed + 1))
-            categories.append(("open_reverse", reverse_ratio))
-        if open_forward_ratio > 0:
-            self.samplers["open_forward"] = _RelationSampler(open_relations, random.Random(seed + 2))
-            categories.append(("open_forward", open_forward_ratio))
-        if restricted_ratio > 0:
-            self.samplers["restricted_forward"] = _RelationSampler(
-                restricted_relations,
-                random.Random(seed + 3),
+        categories: list[tuple[str, float]] = []
+        for offset, category in enumerate(pattern_policy["categories"], start=1):
+            category_name = str(category["category"])
+            partition = str(category["partition"])
+            source_relations = open_relations if partition == "open" else restricted_relations
+            if not source_relations:
+                continue
+            self.samplers[category_name] = _RelationSampler(
+                source_relations,
+                random.Random(seed + offset),
             )
-            categories.append(("restricted_forward", restricted_ratio))
+            categories.append((category_name, float(category["weight"])))
+        self.patterns = {
+            str(category["category"]): str(category["pattern"])
+            for category in pattern_policy["categories"]
+        }
         self.category_sampler = _WeightedCycleSampler(categories, random.Random(seed))
 
     def next(self) -> tuple[dict[str, Any], str]:
         category = self.category_sampler.next()
         relation = self.samplers[category].next()
-        direction = "reverse" if category == "open_reverse" else "forward"
-        return relation, direction
+        return relation, self.patterns[category]
 
 
 def _weighted_cycle_items(weighted_items: list[tuple[Any, float]]) -> list[Any]:
@@ -963,6 +1091,9 @@ def _assert_render_audit(audit: dict[str, Any], audit_cfg: dict[str, Any]) -> No
     if bool(audit_cfg.get("assert_no_restricted_reverse_in_pretrain", True)):
         if audit["restricted_reverse_records"] != 0:
             raise AssertionError("Restricted reverse records were rendered")
+    if bool(audit_cfg.get("assert_no_restricted_bidirectional_in_pretrain", True)):
+        if audit["restricted_bidirectional_records"] != 0:
+            raise AssertionError("Restricted bidirectional records were rendered")
     if bool(audit_cfg.get("assert_no_metadata_id_in_text", True)):
         if audit["metadata_id_in_text_records"] != 0:
             raise AssertionError("metadata id or partition label appeared in rendered text")

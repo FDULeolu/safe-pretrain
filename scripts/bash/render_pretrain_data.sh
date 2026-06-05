@@ -10,7 +10,7 @@ cd "${ROOT_DIR}"
 
 CONFIG="configs/synthetic_pretrain_render.yaml"
 
-WORLD_NAME="synthetic_world_4096effects_8192causes_0.5restricted_2arity_strict_wo_overlap"
+WORLD_NAME="synthetic_world_1024effects_2048causes_0.1restricted_2arity_strict_wo_overlap_dic-words"
 
 TARGET_TOKENS=300000000
 TARGET_RECORDS=null
@@ -25,16 +25,22 @@ TOKEN_BUDGET_ESTIMATE_SAMPLE_RECORDS=200000
 TOKEN_BUDGET_RECORD_SAFETY_MARGIN=1.001
 TRAIN_FRACTION=0.99
 VALIDATION_FRACTION=0.01
-REVERSE_RATIO=0.25
+# Open-relation pattern weights. Restricted relations stay forward-only.
+OPEN_FORWARD_WEIGHT=0.30
+OPEN_REVERSE_WEIGHT=0.30
+OPEN_BIDIRECTIONAL_WEIGHT=0.40
+REVERSE_RATIO=0.0
 
 GENERATOR_VERSION="composition_v1"
 CONNECTOR_VERSION="connector_v1"
 PRETRAIN_WRAPPER_VERSION="pretrain_descriptive_v2"
 PRETRAIN_CAUSE_ORDER="random_swap"
+BIDIRECTIONAL_FORWARD_FIRST_WEIGHT=0.5
+BIDIRECTIONAL_REVERSE_FIRST_WEIGHT=0.5
 
 OVERWRITE=false
 
-RENDER_NAME="${REVERSE_RATIO}reverse_${TRAIN_FRACTION}train_${GENERATOR_VERSION}_${PRETRAIN_WRAPPER_VERSION}_${PRETRAIN_CAUSE_ORDER}"
+RENDER_NAME="open_${OPEN_FORWARD_WEIGHT}forward_${OPEN_REVERSE_WEIGHT}reverse_${OPEN_BIDIRECTIONAL_WEIGHT}bi_${TRAIN_FRACTION}train_${GENERATOR_VERSION}_${PRETRAIN_WRAPPER_VERSION}_${PRETRAIN_CAUSE_ORDER}"
 OUTPUT_DIR="data/worlds/${WORLD_NAME}/pretrain/${RENDER_NAME}"
 
 ARGS=(
@@ -56,11 +62,19 @@ ARGS=(
   "pretrain.token_budgeting.record_safety_margin=${TOKEN_BUDGET_RECORD_SAFETY_MARGIN}"
   "pretrain.train_fraction=${TRAIN_FRACTION}"
   "pretrain.validation_fraction=${VALIDATION_FRACTION}"
+  "pretrain.open_pattern_weights.forward=${OPEN_FORWARD_WEIGHT}"
+  "pretrain.open_pattern_weights.reverse=${OPEN_REVERSE_WEIGHT}"
+  "pretrain.open_pattern_weights.bidirectional=${OPEN_BIDIRECTIONAL_WEIGHT}"
+  "pretrain.restricted_pattern_weights.forward=1.0"
+  "pretrain.restricted_pattern_weights.reverse=0.0"
+  "pretrain.restricted_pattern_weights.bidirectional=0.0"
   "pretrain.reverse_ratio=${REVERSE_RATIO}"
   "composition.generator_version=${GENERATOR_VERSION}"
   "composition.connector_version=${CONNECTOR_VERSION}"
   "composition.pretrain_wrapper_version=${PRETRAIN_WRAPPER_VERSION}"
   "composition.pretrain_cause_order=${PRETRAIN_CAUSE_ORDER}"
+  "composition.bidirectional_order_weights.forward_first=${BIDIRECTIONAL_FORWARD_FIRST_WEIGHT}"
+  "composition.bidirectional_order_weights.reverse_first=${BIDIRECTIONAL_REVERSE_FIRST_WEIGHT}"
 )
 
 if [[ "${OVERWRITE}" == "true" ]]; then
@@ -74,10 +88,12 @@ echo "  target tokens: ${TARGET_TOKENS}"
 echo "  token budget strategy: ${TOKEN_BUDGETING_STRATEGY}"
 echo "  token budget target split: ${TOKEN_BUDGET_TARGET_SPLIT}"
 echo "  token budget tokenizer: ${TOKENIZER_NAME_OR_PATH}"
-echo "  reverse ratio: ${REVERSE_RATIO}"
+echo "  open pattern weights: forward=${OPEN_FORWARD_WEIGHT}, reverse=${OPEN_REVERSE_WEIGHT}, bidirectional=${OPEN_BIDIRECTIONAL_WEIGHT}"
+echo "  legacy reverse ratio fallback: ${REVERSE_RATIO}"
 echo "  connector: ${CONNECTOR_VERSION}"
 echo "  wrapper: ${PRETRAIN_WRAPPER_VERSION}"
 echo "  cause order: ${PRETRAIN_CAUSE_ORDER}"
+echo "  bidirectional order weights: forward_first=${BIDIRECTIONAL_FORWARD_FIRST_WEIGHT}, reverse_first=${BIDIRECTIONAL_REVERSE_FIRST_WEIGHT}"
 echo "  overwrite: ${OVERWRITE}"
 
 python scripts/python/render_synthetic_pretrain.py "${ARGS[@]}"

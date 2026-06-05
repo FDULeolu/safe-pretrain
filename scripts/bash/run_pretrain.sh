@@ -11,12 +11,14 @@ cd "${ROOT_DIR}"
 CONFIG="configs/pretrain_a6000_smollm2_135m.yaml"
 
 # Dataset knobs.
-DATASET_ROOT="/data3/yizhou/projects/safe-pretrain/data/worlds/synthetic_world_1024effects_2048causes_0.1restricted_2arity_strict_wo_overlap_dic-words/pretrain/0.45reverse_0.99train_composition_v1_pretrain_descriptive_v2_random_swap"
+WORLD_NAME="synthetic_world_1024effects_2048causes_0.1restricted_2arity_strict_wo_overlap_dic-words"
+RENDER_NAME="open_0.30forward_0.30reverse_0.40bi_0.99train_composition_v1_pretrain_descriptive_v2_random_swap"
+DATASET_ROOT="${ROOT_DIR}/data/worlds/${WORLD_NAME}/pretrain/${RENDER_NAME}"
 BLOCK_SIZE=512
 TOKENIZED_PATH="${DATASET_ROOT}/tokenized/bs${BLOCK_SIZE}"
 
 # Run identity.
-EXPERIMENT_NAME="smollm2-135m-scratch-0p3b-1epoch-bs${BLOCK_SIZE}-synthetic_world_1024effects_2048causes_0.1restricted_2arity_strict_wo_overlap_dic-words/pretrain/0.45reverse_0.99train_composition_v1_pretrain_descriptive_v2_random_swap_small-batch"
+EXPERIMENT_NAME="smollm2-135m-scratch-0p3b-1epoch-bs${BLOCK_SIZE}-1024rel-2arity-0p1restrict-open0p30f-0p30r-0p40bi-random-swap"
 WANDB_ENABLED="true"
 
 # Hardware.

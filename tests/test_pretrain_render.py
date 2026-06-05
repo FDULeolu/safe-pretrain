@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections import Counter
 
 from safe_pretrain.synthetic.render_pretrain import (
+    _PretrainRelationPatternSampler,
     _WeightedCycleSampler,
+    _build_pretrain_pattern_policy,
     _max_records_without_template_reuse,
     _metadata_visible_in_text,
 )
@@ -106,6 +108,89 @@ def test_random_swap_pretrain_cause_order_applies_to_forward_and_reverse() -> No
                 row.metadata["answer_ids"] == row.metadata["rendered_cause_ids"]
                 for row in rows
             )
+
+
+def test_bidirectional_pretrain_renders_chain_without_duplicate_middle_cause() -> None:
+    relation = {
+        "effect_id": "E000001",
+        "effect_surface": "effectword",
+        "recipe": [
+            {"cause_id": "C000001", "surface": "alpha"},
+            {"cause_id": "C000002", "surface": "beta"},
+        ],
+        "recipe_cause_ids": ["C000001", "C000002"],
+        "partition": "open",
+    }
+    generator = CompositionGenerator(pretrain_cause_order="random_swap")
+
+    rows = [
+        generator.compose_pretrain(
+            relation,
+            direction="bidirectional",
+            world_id="world",
+            render_id="render",
+            split="train",
+            record_index=record_index,
+        )
+        for record_index in range(128)
+    ]
+
+    assert {row.metadata["pretrain_pattern"] for row in rows} == {"bidirectional"}
+    assert {row.metadata["direction"] for row in rows} == {"bidirectional"}
+    assert {row.metadata["bidirectional_order"] for row in rows} == {
+        "forward_first",
+        "reverse_first",
+    }
+    for row in rows:
+        assert row.text is not None
+        if row.metadata["bidirectional_order"] == "forward_first":
+            assert row.text.count("effectword") == 1
+            assert row.text.count("alpha") == 2
+            assert row.text.count("beta") == 2
+            assert len(row.metadata["rendered_cause_span_ids"]) == 2
+        else:
+            assert row.text.count("effectword") == 2
+            assert row.text.count("alpha") == 1
+            assert row.text.count("beta") == 1
+            assert len(row.metadata["rendered_cause_span_ids"]) == 1
+
+
+def test_pattern_policy_allows_open_bidirectional_but_restricted_forward_only() -> None:
+    open_relations = [
+        {"effect_id": "E000001", "partition": "open"},
+        {"effect_id": "E000002", "partition": "open"},
+    ]
+    restricted_relations = [{"effect_id": "E000003", "partition": "restricted"}]
+    policy = _build_pretrain_pattern_policy(
+        {
+            "open_pattern_weights": {
+                "forward": 0.2,
+                "reverse": 0.3,
+                "bidirectional": 0.5,
+            },
+            "restricted_pattern_weights": {"forward": 1.0},
+        },
+        open_relations=open_relations,
+        restricted_relations=restricted_relations,
+    )
+    sampler = _PretrainRelationPatternSampler(
+        open_relations,
+        restricted_relations,
+        pattern_policy=policy,
+        seed=123,
+    )
+
+    counts = Counter()
+    for _ in range(300):
+        relation, pattern = sampler.next()
+        counts[(relation["partition"], pattern)] += 1
+
+    assert counts[("restricted", "reverse")] == 0
+    assert counts[("restricted", "bidirectional")] == 0
+    assert counts[("restricted", "forward")] == 100
+    assert counts[("open", "forward")] == 40
+    assert counts[("open", "reverse")] == 60
+    assert counts[("open", "bidirectional")] == 100
 
 
 def test_pretrain_cause_order_does_not_change_sft_rendering() -> None:

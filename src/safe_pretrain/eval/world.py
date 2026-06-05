@@ -379,6 +379,7 @@ class _PromptRenderer:
                 composition.get("pretrain_wrapper_version") or "pretrain_descriptive_v1"
             ),
             pretrain_cause_order=str(composition.get("pretrain_cause_order") or "canonical"),
+            bidirectional_order_weights=composition.get("bidirectional_order_weights"),
             sft_wrapper_version="sft_chat_qa_v1",
             chat_template_id="smollm2_chatml_v1",
         )

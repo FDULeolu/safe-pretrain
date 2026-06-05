@@ -8,6 +8,8 @@ from safe_pretrain.synthetic.io import canonical_json_sha256
 
 
 Direction = Literal["forward", "reverse"]
+PretrainPattern = Literal["forward", "reverse", "bidirectional"]
+BidirectionalOrder = Literal["forward_first", "reverse_first"]
 Stage = Literal["pretrain", "sft"]
 PretrainCauseOrder = Literal["canonical", "random_swap"]
 
@@ -210,6 +212,7 @@ def composition_manifest(
     connector_version: str,
     pretrain_wrapper_version: str | None = None,
     pretrain_cause_order: PretrainCauseOrder = "canonical",
+    bidirectional_order_weights: dict[str, float] | None = None,
     sft_wrapper_version: str | None = None,
     chat_template_id: str | None = None,
 ) -> dict[str, Any]:
@@ -232,6 +235,11 @@ def composition_manifest(
         ],
         "pretrain_wrapper_version": pretrain_wrapper_version,
         "pretrain_cause_order": pretrain_cause_order if pretrain_wrapper_version else None,
+        "bidirectional_order_weights": (
+            dict(bidirectional_order_weights or _default_bidirectional_order_weights())
+            if pretrain_wrapper_version
+            else None
+        ),
         "pretrain_key_space": (
             len(CONNECTOR_V1) * len(pretrain_sources) * len(pretrain_frames)
             if pretrain_sources and pretrain_frames
@@ -264,6 +272,7 @@ class CompositionGenerator:
         connector_version: str = "connector_v1",
         pretrain_wrapper_version: str = "pretrain_descriptive_v1",
         pretrain_cause_order: PretrainCauseOrder = "canonical",
+        bidirectional_order_weights: dict[str, float] | None = None,
         sft_wrapper_version: str = "sft_chat_qa_v1",
         chat_template_id: str = "smollm2_chatml_v1",
     ) -> None:
@@ -287,11 +296,14 @@ class CompositionGenerator:
         self.connector_version = connector_version
         self.pretrain_wrapper_version = pretrain_wrapper_version
         self.pretrain_cause_order = pretrain_cause_order
+        self.bidirectional_order_weights = _validate_bidirectional_order_weights(
+            bidirectional_order_weights
+        )
         self.sft_wrapper_version = sft_wrapper_version
         self.chat_template_id = chat_template_id
         self.pretrain_sources = pretrain_sources
         self.pretrain_frames = pretrain_frames
-        self._counts: dict[tuple[str, Stage, Direction], int] = {}
+        self._counts: dict[tuple[str, Stage, str], int] = {}
 
     @property
     def pretrain_key_space_size(self) -> int:
@@ -307,6 +319,7 @@ class CompositionGenerator:
             connector_version=self.connector_version,
             pretrain_wrapper_version=self.pretrain_wrapper_version if include_pretrain else None,
             pretrain_cause_order=self.pretrain_cause_order,
+            bidirectional_order_weights=self.bidirectional_order_weights,
             sft_wrapper_version=self.sft_wrapper_version if include_sft else None,
             chat_template_id=self.chat_template_id if include_sft else None,
         )
@@ -315,12 +328,21 @@ class CompositionGenerator:
         self,
         relation: dict[str, Any],
         *,
-        direction: Direction,
+        direction: PretrainPattern,
         world_id: str,
         render_id: str,
         split: str,
         record_index: int,
     ) -> Composition:
+        if direction == "bidirectional":
+            return self._compose_bidirectional_pretrain(
+                relation,
+                world_id=world_id,
+                render_id=render_id,
+                split=split,
+                record_index=record_index,
+            )
+
         left, right, answer_ids, cause_order = _pair_for_direction(
             relation,
             direction,
@@ -362,8 +384,128 @@ class CompositionGenerator:
             template_key=template_key,
             answer_text=right,
             answer_ids=answer_ids,
+            pretrain_pattern=direction,
             rendered_cause_ids=[item["cause_id"] for item in cause_order],
             rendered_cause_order_policy=self.pretrain_cause_order,
+        )
+        metadata["render_id"] = render_id
+        metadata["world_id"] = world_id
+        metadata["record_index"] = record_index
+        return Composition(text=_normalize_text(text), messages=None, metadata=metadata)
+
+    def _compose_bidirectional_pretrain(
+        self,
+        relation: dict[str, Any],
+        *,
+        world_id: str,
+        render_id: str,
+        split: str,
+        record_index: int,
+    ) -> Composition:
+        order = _bidirectional_order(
+            self.bidirectional_order_weights,
+            {
+                "stage": "pretrain",
+                "relation_id": relation["effect_id"],
+                "direction": "bidirectional",
+                "record_index": record_index,
+                "render_id": render_id,
+            },
+        )
+        connector, key_parts = self._pretrain_key(
+            relation_id=relation["effect_id"],
+            direction="bidirectional",
+        )
+        effect = relation["effect_surface"]
+        if order == "forward_first":
+            first_causes = _ordered_recipe(
+                relation,
+                cause_order=self.pretrain_cause_order,
+                order_key={
+                    "stage": "pretrain",
+                    "relation_id": relation["effect_id"],
+                    "direction": "bidirectional",
+                    "record_index": record_index,
+                    "render_id": render_id,
+                    "span": "first",
+                },
+            )
+            final_causes = _ordered_recipe(
+                relation,
+                cause_order=self.pretrain_cause_order,
+                order_key={
+                    "stage": "pretrain",
+                    "relation_id": relation["effect_id"],
+                    "direction": "bidirectional",
+                    "record_index": record_index,
+                    "render_id": render_id,
+                    "span": "final",
+                },
+            )
+            first_text = _cause_text(first_causes)
+            final_text = _cause_text(final_causes)
+            relation_text = (
+                f"{first_text} {connector.forward_text} {effect} "
+                f"{connector.reverse_text} {final_text}"
+            )
+            answer_text = final_text
+            answer_ids = [item["cause_id"] for item in final_causes]
+            rendered_cause_ids = answer_ids
+            rendered_cause_spans = [
+                [item["cause_id"] for item in first_causes],
+                [item["cause_id"] for item in final_causes],
+            ]
+        else:
+            causes = _ordered_recipe(
+                relation,
+                cause_order=self.pretrain_cause_order,
+                order_key={
+                    "stage": "pretrain",
+                    "relation_id": relation["effect_id"],
+                    "direction": "bidirectional",
+                    "record_index": record_index,
+                    "render_id": render_id,
+                    "span": "middle",
+                },
+            )
+            cause_text = _cause_text(causes)
+            relation_text = (
+                f"{effect} {connector.reverse_text} {cause_text} "
+                f"{connector.forward_text} {effect}"
+            )
+            answer_text = effect
+            answer_ids = [relation["effect_id"]]
+            rendered_cause_ids = [item["cause_id"] for item in causes]
+            rendered_cause_spans = [rendered_cause_ids]
+
+        text = key_parts["frame_text"].format(source=key_parts["source_text"], relation=relation_text)
+        template_key = self._template_key(
+            stage="pretrain",
+            relation_id=relation["effect_id"],
+            direction="bidirectional",
+            connector_id=connector.connector_id,
+            wrapper_id=key_parts["wrapper_id"],
+            slots={
+                "source_id": key_parts["source_id"],
+                "source_text": key_parts["source_text"],
+            },
+        )
+        metadata = self._metadata(
+            relation=relation,
+            stage="pretrain",
+            split=split,
+            direction="bidirectional",
+            connector=connector,
+            connector_text=f"{connector.forward_text} | {connector.reverse_text}",
+            wrapper_id=key_parts["wrapper_id"],
+            template_key=template_key,
+            answer_text=answer_text,
+            answer_ids=answer_ids,
+            pretrain_pattern="bidirectional",
+            bidirectional_order=order,
+            rendered_cause_ids=rendered_cause_ids,
+            rendered_cause_order_policy=self.pretrain_cause_order,
+            rendered_cause_span_ids=rendered_cause_spans,
         )
         metadata["render_id"] = render_id
         metadata["world_id"] = world_id
@@ -432,6 +574,19 @@ class CompositionGenerator:
         left: str,
         right: str,
     ) -> tuple[str, Connector, dict[str, str]]:
+        connector, key_parts = self._pretrain_key(
+            relation_id=relation_id,
+            direction=direction,
+        )
+        relation_text = f"{left} {connector.text_for(direction)} {right}"
+        return relation_text, connector, key_parts
+
+    def _pretrain_key(
+        self,
+        *,
+        relation_id: str,
+        direction: str,
+    ) -> tuple[Connector, dict[str, str]]:
         key_index = self._next_key_index(
             relation_id=relation_id,
             stage="pretrain",
@@ -446,8 +601,7 @@ class CompositionGenerator:
         connector = CONNECTOR_V1[connector_index]
         wrapper_id, frame_text = self.pretrain_frames[frame_index]
         source_text = self.pretrain_sources[source_index]
-        relation_text = f"{left} {connector.text_for(direction)} {right}"
-        return relation_text, connector, {
+        return connector, {
             "wrapper_id": wrapper_id,
             "frame_text": frame_text,
             "source_id": f"source_{source_index:03d}",
@@ -472,7 +626,7 @@ class CompositionGenerator:
         *,
         relation_id: str,
         stage: Stage,
-        direction: Direction,
+        direction: str,
         key_space_size: int,
     ) -> int:
         counter_key = (relation_id, stage, direction)
@@ -492,7 +646,7 @@ class CompositionGenerator:
         *,
         stage: Stage,
         relation_id: str,
-        direction: Direction,
+        direction: str,
         connector_id: str,
         wrapper_id: str,
         slots: dict[str, Any],
@@ -514,15 +668,18 @@ class CompositionGenerator:
         relation: dict[str, Any],
         stage: Stage,
         split: str,
-        direction: Direction,
+        direction: str,
         connector: Connector,
         connector_text: str,
         wrapper_id: str,
         template_key: dict[str, Any],
         answer_text: str,
         answer_ids: list[str],
+        pretrain_pattern: str | None = None,
+        bidirectional_order: str | None = None,
         rendered_cause_ids: list[str] | None = None,
         rendered_cause_order_policy: str | None = None,
+        rendered_cause_span_ids: list[list[str]] | None = None,
     ) -> dict[str, Any]:
         metadata = {
             "stage": stage,
@@ -540,6 +697,10 @@ class CompositionGenerator:
             "answer_text": answer_text,
             "answer_ids": answer_ids,
         }
+        if pretrain_pattern is not None:
+            metadata["pretrain_pattern"] = pretrain_pattern
+        if bidirectional_order is not None:
+            metadata["bidirectional_order"] = bidirectional_order
         if rendered_cause_ids is not None:
             metadata["rendered_cause_ids"] = rendered_cause_ids
             metadata["rendered_cause_order_policy"] = rendered_cause_order_policy
@@ -548,6 +709,8 @@ class CompositionGenerator:
                 if rendered_cause_ids == list(relation["recipe_cause_ids"])
                 else "swapped"
             )
+        if rendered_cause_span_ids is not None:
+            metadata["rendered_cause_span_ids"] = rendered_cause_span_ids
         return metadata
 
 
@@ -583,7 +746,7 @@ def _pair_for_direction(
     order_key: dict[str, Any] | None,
 ) -> tuple[str, str, list[str], list[dict[str, Any]]]:
     ordered_recipe = _ordered_recipe(relation, cause_order=cause_order, order_key=order_key)
-    causes = ", ".join(item["surface"] for item in ordered_recipe)
+    causes = _cause_text(ordered_recipe)
     if direction == "forward":
         return causes, relation["effect_surface"], [relation["effect_id"]], ordered_recipe
     if direction == "reverse":
@@ -594,6 +757,10 @@ def _pair_for_direction(
             ordered_recipe,
         )
     raise ValueError(f"Unsupported direction: {direction}")
+
+
+def _cause_text(recipe: list[dict[str, Any]]) -> str:
+    return ", ".join(item["surface"] for item in recipe)
 
 
 def _ordered_recipe(
@@ -633,3 +800,37 @@ def _normalize_text(text: str) -> str:
 
 def _stable_int(payload: Any) -> int:
     return int(canonical_json_sha256(payload)[:16], 16)
+
+
+def _default_bidirectional_order_weights() -> dict[str, float]:
+    return {"forward_first": 0.5, "reverse_first": 0.5}
+
+
+def _validate_bidirectional_order_weights(
+    weights: dict[str, float] | None,
+) -> dict[str, float]:
+    raw = weights or _default_bidirectional_order_weights()
+    allowed = {"forward_first", "reverse_first"}
+    unknown = set(raw) - allowed
+    if unknown:
+        raise ValueError(
+            "Unsupported composition.bidirectional_order_weights keys: "
+            f"{sorted(unknown)}"
+        )
+    normalized = {key: float(raw.get(key, 0.0)) for key in sorted(allowed)}
+    if any(weight < 0 for weight in normalized.values()):
+        raise ValueError("composition.bidirectional_order_weights must be non-negative")
+    total = sum(normalized.values())
+    if total <= 0:
+        raise ValueError("composition.bidirectional_order_weights needs a positive weight")
+    return {key: value / total for key, value in normalized.items()}
+
+
+def _bidirectional_order(
+    weights: dict[str, float],
+    order_key: dict[str, Any],
+) -> BidirectionalOrder:
+    threshold = (_stable_int({"bidirectional_order": order_key}) % 10_000_000) / 10_000_000
+    if threshold < float(weights.get("forward_first", 0.0)):
+        return "forward_first"
+    return "reverse_first"
