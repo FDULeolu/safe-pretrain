@@ -7,15 +7,18 @@ __pycache__/
 .ipynb_checkpoints/
 .agents/
 .codex/
+.codex-tmp/
 *.egg-info/
 
 data/raw/
+artifacts/
 data/worlds/
 data/synthetic/
 data/tokenized/
 doc/
 outputs/
 wandb/
+logs/
 
 .env
 .venv

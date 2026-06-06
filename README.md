@@ -66,7 +66,9 @@ data:
     text_column: text
 ```
 
-Supported raw formats are `jsonl`, `json`, `csv`, `parquet`, `text`, and `hf`.
+Supported raw formats are `jsonl`, `json`, `csv`, `parquet`, `text`, `hf`, and
+`hf_disk`. Use `hf_disk` when `data.raw.dataset_root` points to a dataset saved
+with `datasets.save_to_disk()`.
 
 ## Synthetic Data
 
@@ -100,7 +102,7 @@ bash scripts/bash/render_pretrain_data.sh
 This writes:
 
 ```text
-data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/open_0.35forward_0.35reverse_0.3bi_0.99train_composition_v1_pretrain_descriptive_v2_random_swap/
+data/worlds/synthetic_world_1024effects_2048causes_0.1restricted_2arity_strict_wo_overlap_dic-words/pretrain/bridge_open_0.20f_0.20r_0.20i_0.20fr_0.20rf_restrict_0.25f_0.25i_0.25fr_0.25rf_noalias_0.99train_composition_v1_pretrain_descriptive_v2_random_swap/
   composition_manifest.json
   experiment_splits.json
   pretrain_train.jsonl
@@ -115,12 +117,33 @@ evaluation data should all reference the same `world_id`. The fixed world stores
 the open/restricted oracle partition; train/validation and experiment-specific
 target assignments are rendered-dataset metadata.
 
-Pretrain render controls corpus size, train/validation split, the open-relation
-pattern mix, and the pretrain-only cause order policy. By default, open records
-are sampled from `forward`, `reverse`, and `bidirectional`; restricted records
-remain `forward` only. A bidirectional pretrain record is a single synthetic
-chain such as `cause connector effect connector cause`, so the forward and
-reverse forms appear in the same LM sample without an EOS boundary between them.
+Pretrain render controls corpus size, train/validation split, the relation
+pattern mix, connector grammar, and the pretrain-only cause order policy. Set
+`pretrain.pattern_preset` to `vanilla`, `bidirectional`, `mapping_v1`,
+`mapping_v2`, `mirror_probe_v1`, or `mirror_probe_v2` to switch common
+constructions; leave it as `custom` to use the explicit `open_pattern_weights`
+and `restricted_pattern_weights` maps.
+
+`connector_v1` preserves the historical paraphrased connectors. For mapping-v2
+experiments, use `composition.connector_version=connector_composable_v1`: it uses
+one stable mapping family and renders typed operator paths compositionally, for
+example `maps forward to outcome, then maps backward to causes, ending at ...`.
+Dynamic pattern names are underscore-joined operators, such as
+`forward_identity` (`F,I`) and `identity_forward` (`I,F`). Restricted data rejects
+paths that would expose direct B-to-A reverse answers, including `reverse`,
+`reverse_identity`, and `identity_reverse`.
+
+`mirror_probe_v1` and `mirror_probe_v2` are diagnostic-only presets. They add
+`mirror_forward`, an entity-preserved token mirror of forward relation clauses:
+`A maps forward to outcome B` becomes `B outcome to forward maps A`. Restricted
+relations still have no normal `reverse` records, but they do receive
+B-conditioned cause-token gradients. V2 also includes `mirror_forward` on open
+relations to align the mirror pattern with normal forward/reverse examples.
+
+Plain `identity` preserves the current entity type. On cause-side entities it is
+rendered as `keeps the same causes`; on effect-side entities it is rendered as
+`keeps the same outcome`. The intermediate entity in multi-step paths is not
+rendered as a direct answer.
 `composition.pretrain_cause_order=random_swap` deterministically swaps two cause
 positions on a per-record basis; SFT rendering remains canonical unless changed
 separately.
@@ -150,7 +173,8 @@ Pretrain and SFT share the same connector vocabulary but use different wrappers.
 The allowed exposure matrix is:
 
 ```text
-pretrain: forward_open, forward_restricted, reverse_open, bidirectional_open
+pretrain: forward_open, reverse_open, identity_open, forward_reverse_open, reverse_forward_open,
+          forward_restricted, identity_restricted, forward_reverse_restricted, reverse_forward_restricted
 sft train/validation/test_safe: forward_open, forward_restricted, reverse_open
 attack eval: reverse_restricted
 ```
@@ -167,7 +191,7 @@ python scripts/python/tokenize_dataset.py \
 This writes a packed Hugging Face dataset to:
 
 ```text
-data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/open_0.35forward_0.35reverse_0.3bi_0.99train_composition_v1_pretrain_descriptive_v2_random_swap/tokenized/bs2048
+data/worlds/synthetic_world_1024effects_2048causes_0.1restricted_2arity_strict_wo_overlap_dic-words/pretrain/bridge_open_0.20f_0.20r_0.20i_0.20fr_0.20rf_restrict_0.25f_0.25i_0.25fr_0.25rf_noalias_0.99train_composition_v1_pretrain_descriptive_v2_random_swap/tokenized/bs512
 ```
 
 The training loop consumes fixed-size token blocks, so it does not run the
@@ -179,6 +203,13 @@ to manually repeat it when launching training.
 The default `data.tokenized.path` lives under the rendered pretrain dataset
 folder so the raw JSONL and packed Hugging Face dataset keep the same world and
 render lineage.
+
+Render can optionally export a raw Hugging Face dataset for tokenization:
+`render.export_raw_arrow=true` writes `${render.output_dir}/raw_arrow`. Then run
+tokenization with `data.raw.format=hf_disk` and
+`data.raw.dataset_root=${render.output_dir}/raw_arrow` to avoid rebuilding the
+raw JSONL cache during tokenization. `scripts/bash/render_tokenize_mirror_probe.sh`
+uses this path by default.
 
 For this synthetic task, the documents are likely short. Use `128` or `256` for
 smoke tests, and start formal experiments with `512` or `1024`. Move to `2048`

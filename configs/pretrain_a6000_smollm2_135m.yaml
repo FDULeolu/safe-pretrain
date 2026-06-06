@@ -24,7 +24,7 @@ model:
 
 data:
   raw:
-    # Supported formats: jsonl, json, csv, parquet, text, hf.
+    # Supported formats: jsonl, json, csv, parquet, text, hf, hf_disk.
     format: jsonl
     dataset_root: data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/0.0reverse_0.99train_composition_v1
     train_files:

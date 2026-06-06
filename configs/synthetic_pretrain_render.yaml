@@ -1,11 +1,14 @@
 render:
-  name: open_${pretrain.open_pattern_weights.forward}forward_${pretrain.open_pattern_weights.reverse}reverse_${pretrain.open_pattern_weights.bidirectional}bi_${pretrain.train_fraction}train_${composition.generator_version}_${composition.pretrain_wrapper_version}_${composition.pretrain_cause_order}
+  name: ${pretrain.pattern_preset}_open_${pretrain.open_pattern_weights.forward}f_${pretrain.open_pattern_weights.reverse}r_${pretrain.open_pattern_weights.identity}i_${pretrain.open_pattern_weights.forward_reverse}fr_${pretrain.open_pattern_weights.reverse_forward}rf_restrict_${pretrain.restricted_pattern_weights.forward}f_${pretrain.restricted_pattern_weights.identity}i_${pretrain.restricted_pattern_weights.forward_reverse}fr_${pretrain.restricted_pattern_weights.reverse_forward}rf_alias${composition.pretrain_alias_enabled}_p${composition.pretrain_alias_replacement_probability}_${pretrain.train_fraction}train_${composition.generator_version}_${composition.connector_version}_${composition.pretrain_wrapper_version}_${composition.pretrain_cause_order}
   seed: 123
   output_dir: data/worlds/${world.name}/pretrain/${render.name}
   overwrite: false
+  export_raw_arrow: false
+  raw_arrow_dir: ${render.output_dir}/raw_arrow
+  raw_arrow_text_only: true
 
 world:
-  name: synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap
+  name: synthetic_world_1024effects_2048causes_0.1restricted_2arity_strict_wo_overlap_dic-words
   path: data/worlds/${world.name}
   expected_world_id: null
 
@@ -26,15 +29,25 @@ pretrain:
   estimated_tokens_per_record: 24
   train_fraction: 0.99
   validation_fraction: 0.01
-  # New pattern-weight path. These weights are conditional on relation
-  # partition: open relations can render forward/reverse/bidirectional records;
-  # restricted relations remain forward-only.
+  # Set to vanilla, bidirectional, mapping_v1, mapping_v2, mirror_probe_v1, or
+  # mirror_probe_v2 to ignore the explicit weights below and switch construction
+  # with one override.
+  pattern_preset: custom
+  # Pattern weights are conditional on relation partition. Open relations can
+  # render direct reverse records; restricted relations cannot render direct
+  # reverse or bidirectional records, but can render identity bridge records.
   open_pattern_weights:
-    forward: 0.35
-    reverse: 0.35
-    bidirectional: 0.30
+    forward: 0.20
+    reverse: 0.20
+    identity: 0.20
+    forward_reverse: 0.20
+    reverse_forward: 0.20
+    bidirectional: 0.0
   restricted_pattern_weights:
-    forward: 1.0
+    forward: 0.25
+    identity: 0.25
+    forward_reverse: 0.25
+    reverse_forward: 0.25
     reverse: 0.0
     bidirectional: 0.0
   # Legacy fallback used only when open_pattern_weights is absent.
@@ -42,9 +55,14 @@ pretrain:
 
 composition:
   generator_version: composition_v1
+  # connector_composable_v1 uses one stable mapping family and renders operator
+  # paths compositionally; connector_v1 preserves the historical templates.
   connector_version: connector_v1
   pretrain_wrapper_version: pretrain_descriptive_v2
   pretrain_cause_order: random_swap
+  pretrain_alias_enabled: false
+  pretrain_alias_replacement_probability: 0.25
+  pretrain_answer_alias_replacement_probability: 0.0
   bidirectional_order_weights:
     forward_first: 0.5
     reverse_first: 0.5
