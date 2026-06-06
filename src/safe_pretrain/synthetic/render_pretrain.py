@@ -15,7 +15,13 @@ from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 
 from safe_pretrain.config import save_config
-from safe_pretrain.synthetic.composition import CompositionGenerator
+from safe_pretrain.synthetic.composition import (
+    CompositionGenerator,
+    MIRROR_FORWARD_PATTERN,
+    is_pretrain_operator_pattern,
+    pretrain_pattern_exposes_reverse_gradient,
+    pretrain_pattern_exposes_restricted_reverse,
+)
 from safe_pretrain.synthetic.io import (
     canonical_json_sha256,
     file_sha256,
@@ -23,6 +29,83 @@ from safe_pretrain.synthetic.io import (
     read_json,
     write_json,
 )
+
+
+DEFAULT_PRETRAIN_PATTERN_NAMES = {
+    "forward",
+    "reverse",
+    "bidirectional",
+    "identity",
+    "forward_reverse",
+    "reverse_forward",
+    MIRROR_FORWARD_PATTERN,
+}
+
+PRETRAIN_PATTERN_PRESETS: dict[str, dict[str, dict[str, float]]] = {
+    "vanilla": {
+        "open": {"forward": 0.55, "reverse": 0.45},
+        "restricted": {"forward": 1.0},
+    },
+    "bidirectional": {
+        "open": {"forward": 0.30, "reverse": 0.30, "bidirectional": 0.40},
+        "restricted": {"forward": 1.0},
+    },
+    "mapping_v1": {
+        "open": {
+            "forward": 0.20,
+            "reverse": 0.20,
+            "identity": 0.20,
+            "forward_reverse": 0.20,
+            "reverse_forward": 0.20,
+        },
+        "restricted": {
+            "forward": 0.25,
+            "identity": 0.25,
+            "forward_reverse": 0.25,
+            "reverse_forward": 0.25,
+        },
+    },
+    "mapping_v2": {
+        "open": {
+            "forward": 0.25,
+            "reverse": 0.25,
+            "identity": 0.10,
+            "forward_reverse": 0.15,
+            "reverse_forward": 0.15,
+            "forward_identity": 0.05,
+            "identity_forward": 0.05,
+        },
+        "restricted": {
+            "forward": 0.40,
+            "identity": 0.05,
+            "forward_reverse": 0.25,
+            "reverse_forward": 0.20,
+            "forward_identity": 0.05,
+            "identity_forward": 0.05,
+        },
+    },
+    "mirror_probe_v1": {
+        "open": {
+            "forward": 0.50,
+            "reverse": 0.50,
+        },
+        "restricted": {
+            "forward": 0.50,
+            "mirror_forward": 0.50,
+        },
+    },
+    "mirror_probe_v2": {
+        "open": {
+            "forward": 0.35,
+            "reverse": 0.35,
+            "mirror_forward": 0.30,
+        },
+        "restricted": {
+            "forward": 0.50,
+            "mirror_forward": 0.50,
+        },
+    },
+}
 
 
 def render_pretrain_dataset(
@@ -227,6 +310,12 @@ def render_pretrain_dataset(
     }
     _assert_render_audit(audit, audit_cfg)
     write_json(output_path / "audit_render.json", audit)
+    raw_arrow = _maybe_export_raw_arrow(
+        render_cfg,
+        output_path=output_path,
+        train_path=train_path,
+        validation_path=validation_path,
+    )
 
     manifest = {
         "render_name": str(render_cfg.get("name", output_path.name)),
@@ -247,14 +336,18 @@ def render_pretrain_dataset(
         "direction_counts": audit["direction_counts"],
         "pretrain_pattern_counts": audit["pretrain_pattern_counts"],
         "bidirectional_order_counts": audit["bidirectional_order_counts"],
+        "operator_count_records": audit["operator_count_records"],
+        "max_operator_count": audit["max_operator_count"],
         "connector_counts": audit["connector_counts"],
         "wrapper_counts": audit["wrapper_counts"],
         "rendered_cause_order_counts": audit["rendered_cause_order_counts"],
         "rendered_cause_order_policy_counts": audit["rendered_cause_order_policy_counts"],
+        "alias_replacement_count_records": audit["alias_replacement_count_records"],
         "partition_counts": audit["partition_counts"],
         "token_counts": audit.get("token_counts", {}),
         "token_budget": audit.get("token_budget", {"enabled": False}),
         "pretrain_pattern_policy": audit["pretrain_pattern_policy"],
+        "raw_arrow": raw_arrow,
     }
     write_json(output_path / "render_manifest.json", manifest)
     write_json(output_path / "checksums.json", _checksums(output_path, manifest["files"].values()))
@@ -268,6 +361,7 @@ class _Stats:
         self.directions = Counter()
         self.pretrain_patterns = Counter()
         self.bidirectional_orders = Counter()
+        self.operator_counts = Counter()
         self.connectors = Counter()
         self.wrappers = Counter()
         self.rendered_cause_orders = Counter()
@@ -277,7 +371,10 @@ class _Stats:
         self.template_keys_by_relation: dict[str, set[tuple[str, str]]] = defaultdict(set)
         self.reverse_effect_ids: set[str] = set()
         self.restricted_reverse_records = 0
+        self.restricted_reverse_gradient_records = 0
         self.restricted_bidirectional_records = 0
+        self.alias_replacement_counts = Counter()
+        self.max_operator_count = 0
         self.metadata_id_in_text = 0
         self.duplicate_template_keys = 0
         self.token_counts = Counter()
@@ -292,6 +389,9 @@ class _Stats:
         self.pretrain_patterns[pattern] += 1
         if pattern == "bidirectional":
             self.bidirectional_orders[metadata.get("bidirectional_order", "unknown")] += 1
+        operator_count = int(metadata.get("operator_count", 1))
+        self.operator_counts[str(operator_count)] += 1
+        self.max_operator_count = max(self.max_operator_count, operator_count)
         self.connectors[metadata["connector_id"]] += 1
         self.wrappers[metadata["wrapper_id"]] += 1
         self.rendered_cause_orders[metadata.get("rendered_cause_order", "canonical")] += 1
@@ -308,10 +408,17 @@ class _Stats:
             relation_keys.add(template_key)
         if pattern in {"reverse", "bidirectional"}:
             self.reverse_effect_ids.add(metadata["effect_id"])
-        if metadata["partition"] == "restricted" and pattern in {"reverse", "bidirectional"}:
+        if metadata["partition"] == "restricted" and pattern == "reverse":
             self.restricted_reverse_records += 1
+        if metadata["partition"] == "restricted" and pretrain_pattern_exposes_reverse_gradient(
+            str(pattern)
+        ):
+            self.restricted_reverse_gradient_records += 1
         if metadata["partition"] == "restricted" and pattern == "bidirectional":
             self.restricted_bidirectional_records += 1
+        self.alias_replacement_counts[
+            str(int(metadata.get("alias_replacement_count", 0)))
+        ] += 1
         if _metadata_visible_in_text(row["text"], metadata):
             self.metadata_id_in_text += 1
         if token_count is not None:
@@ -330,10 +437,13 @@ class _Stats:
             "direction_counts": dict(self.directions),
             "pretrain_pattern_counts": dict(self.pretrain_patterns),
             "bidirectional_order_counts": dict(self.bidirectional_orders),
+            "operator_count_records": dict(self.operator_counts),
+            "max_operator_count": self.max_operator_count,
             "connector_counts": dict(self.connectors),
             "wrapper_counts": dict(self.wrappers),
             "rendered_cause_order_counts": dict(self.rendered_cause_orders),
             "rendered_cause_order_policy_counts": dict(self.rendered_cause_order_policies),
+            "alias_replacement_count_records": dict(self.alias_replacement_counts),
             "effect_exposure": {
                 "num_effects_seen": len(exposure_values),
                 "min": min(exposure_values) if exposure_values else 0,
@@ -350,6 +460,7 @@ class _Stats:
                 ),
             },
             "restricted_reverse_records": self.restricted_reverse_records,
+            "restricted_reverse_gradient_records": self.restricted_reverse_gradient_records,
             "restricted_bidirectional_records": self.restricted_bidirectional_records,
             "metadata_id_in_text_records": self.metadata_id_in_text,
             "duplicate_template_keys_per_relation": self.duplicate_template_keys,
@@ -373,7 +484,14 @@ def _build_composition_generator(composition_cfg: dict[str, Any]) -> Composition
         pretrain_wrapper_version=str(
             composition_cfg.get("pretrain_wrapper_version", "pretrain_descriptive_v1")
         ),
-        pretrain_cause_order=str(composition_cfg.get("pretrain_cause_order", "canonical")),
+        pretrain_cause_order=str(composition_cfg.get("pretrain_cause_order", "random_swap")),
+        pretrain_alias_enabled=bool(composition_cfg.get("pretrain_alias_enabled", False)),
+        pretrain_alias_replacement_probability=float(
+            composition_cfg.get("pretrain_alias_replacement_probability", 0.0)
+        ),
+        pretrain_answer_alias_replacement_probability=float(
+            composition_cfg.get("pretrain_answer_alias_replacement_probability", 0.0)
+        ),
         bidirectional_order_weights=composition_cfg.get("bidirectional_order_weights"),
         sft_wrapper_version=str(composition_cfg.get("sft_wrapper_version", "sft_chat_qa_v1")),
         chat_template_id=str(composition_cfg.get("chat_template_id", "smollm2_chatml_v1")),
@@ -392,25 +510,37 @@ def _build_pretrain_pattern_policy(
     open_ratio = len(open_relations) / len(relations)
     restricted_ratio = len(restricted_relations) / len(relations)
     categories: list[dict[str, Any]] = []
+    preset_name = _pattern_preset_name(pretrain_cfg)
+    preset_weights = _pattern_preset_weights(preset_name)
 
-    open_pattern_weights = pretrain_cfg.get("open_pattern_weights")
+    open_pattern_weights = None if preset_weights is not None else pretrain_cfg.get("open_pattern_weights")
     if open_pattern_weights is None:
-        reverse_ratio = float(pretrain_cfg.get("reverse_ratio", 0.0))
-        if not 0 <= reverse_ratio <= 1:
-            raise ValueError("pretrain.reverse_ratio must be in [0, 1]")
-        if reverse_ratio > open_ratio:
-            raise ValueError(
-                "pretrain.reverse_ratio cannot exceed the world's open relation ratio "
-                f"({reverse_ratio:.6f} > {open_ratio:.6f})"
+        if preset_weights is not None:
+            open_weights = _normalize_pattern_weights(
+                preset_weights["open"],
+                context=f"pretrain.pattern_preset.{preset_name}.open",
             )
-        if reverse_ratio > 0 and not open_relations:
-            raise ValueError("pretrain.reverse_ratio > 0 but the world has no open effects")
-        open_weights = {
-            "forward": (open_ratio - reverse_ratio) / open_ratio if open_ratio > 0 else 0.0,
-            "reverse": reverse_ratio / open_ratio if open_ratio > 0 else 0.0,
-            "bidirectional": 0.0,
-        }
-        mode = "legacy_reverse_ratio"
+            mode = f"pattern_preset:{preset_name}"
+        else:
+            reverse_ratio = float(pretrain_cfg.get("reverse_ratio", 0.0))
+            if not 0 <= reverse_ratio <= 1:
+                raise ValueError("pretrain.reverse_ratio must be in [0, 1]")
+            if reverse_ratio > open_ratio:
+                raise ValueError(
+                    "pretrain.reverse_ratio cannot exceed the world's open relation ratio "
+                    f"({reverse_ratio:.6f} > {open_ratio:.6f})"
+                )
+            if reverse_ratio > 0 and not open_relations:
+                raise ValueError("pretrain.reverse_ratio > 0 but the world has no open effects")
+            open_weights = {
+                "forward": (open_ratio - reverse_ratio) / open_ratio if open_ratio > 0 else 0.0,
+                "reverse": reverse_ratio / open_ratio if open_ratio > 0 else 0.0,
+                "bidirectional": 0.0,
+                "identity": 0.0,
+                "forward_reverse": 0.0,
+                "reverse_forward": 0.0,
+            }
+            mode = "legacy_reverse_ratio"
     else:
         open_weights = _normalize_pattern_weights(
             open_pattern_weights,
@@ -431,30 +561,38 @@ def _build_pretrain_pattern_policy(
                     }
                 )
 
+    restricted_pattern_weights = (
+        preset_weights["restricted"]
+        if preset_weights is not None
+        else pretrain_cfg.get("restricted_pattern_weights") or {"forward": 1.0}
+    )
     restricted_weights = _normalize_pattern_weights(
-        pretrain_cfg.get("restricted_pattern_weights") or {"forward": 1.0},
+        restricted_pattern_weights,
         context="pretrain.restricted_pattern_weights",
     )
     unsafe_restricted = {
         pattern: weight
         for pattern, weight in restricted_weights.items()
-        if pattern in {"reverse", "bidirectional"} and weight > 0
+        if pretrain_pattern_exposes_restricted_reverse(pattern) and weight > 0
     }
     if unsafe_restricted:
         raise ValueError(
-            "restricted pretrain pattern weights may only include forward; got "
+            "restricted pretrain pattern weights may not include paths that expose "
+            "direct reverse B-to-A answers; got "
             f"{unsafe_restricted}"
         )
-    if restricted_relations and restricted_weights["forward"] > 0:
-        categories.append(
-            {
-                "category": "restricted_forward",
-                "partition": "restricted",
-                "pattern": "forward",
-                "weight": restricted_ratio * restricted_weights["forward"],
-                "num_relations": len(restricted_relations),
-            }
-        )
+    if restricted_relations:
+        for pattern, conditional_weight in restricted_weights.items():
+            if conditional_weight > 0:
+                categories.append(
+                    {
+                        "category": f"restricted_{pattern}",
+                        "partition": "restricted",
+                        "pattern": pattern,
+                        "weight": restricted_ratio * conditional_weight,
+                        "num_relations": len(restricted_relations),
+                    }
+                )
 
     categories = _normalize_policy_categories(categories)
     if not categories:
@@ -467,12 +605,40 @@ def _build_pretrain_pattern_policy(
     }
 
 
+def _pattern_preset_name(pretrain_cfg: dict[str, Any]) -> str | None:
+    raw = pretrain_cfg.get("pattern_preset")
+    if raw is None:
+        return None
+    name = str(raw)
+    if name.lower() in {"", "none", "null", "custom"}:
+        return None
+    return name
+
+
+def _pattern_preset_weights(name: str | None) -> dict[str, dict[str, float]] | None:
+    if name is None:
+        return None
+    try:
+        return PRETRAIN_PATTERN_PRESETS[name]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported pretrain.pattern_preset: {name}. "
+            f"Choose one of {sorted(PRETRAIN_PATTERN_PRESETS)} or set custom weights."
+        ) from exc
+
+
 def _normalize_pattern_weights(raw: dict[str, Any], *, context: str) -> dict[str, float]:
-    allowed = {"forward", "reverse", "bidirectional"}
-    unknown = set(raw) - allowed
+    unknown = {
+        pattern
+        for pattern in raw
+        if pattern != "bidirectional"
+        and pattern != MIRROR_FORWARD_PATTERN
+        and not is_pretrain_operator_pattern(str(pattern))
+    }
     if unknown:
         raise ValueError(f"Unsupported {context} keys: {sorted(unknown)}")
-    weights = {pattern: float(raw.get(pattern, 0.0)) for pattern in sorted(allowed)}
+    patterns = sorted(DEFAULT_PRETRAIN_PATTERN_NAMES | {str(pattern) for pattern in raw})
+    weights = {pattern: float(raw.get(pattern, 0.0)) for pattern in patterns}
     if any(weight < 0 for weight in weights.values()):
         raise ValueError(f"{context} values must be non-negative")
     total = sum(weights.values())
@@ -960,7 +1126,11 @@ class _PretrainRelationPatternSampler:
         return relation, self.patterns[category]
 
 
-def _weighted_cycle_items(weighted_items: list[tuple[Any, float]]) -> list[Any]:
+def _weighted_cycle_items(
+    weighted_items: list[tuple[Any, float]],
+    *,
+    max_cycle_size: int = 10000,
+) -> list[Any]:
     fractions: list[tuple[Any, Fraction]] = []
     for item, weight in weighted_items:
         if weight <= 0:
@@ -973,12 +1143,58 @@ def _weighted_cycle_items(weighted_items: list[tuple[Any, float]]) -> list[Any]:
     denominator = 1
     for _, fraction in normalized:
         denominator = math.lcm(denominator, fraction.denominator)
+    if denominator > max_cycle_size:
+        return _approx_weighted_cycle_items(normalized, max_cycle_size=max_cycle_size)
     counts = [(item, int(fraction * denominator)) for item, fraction in normalized]
     count_total = sum(count for _, count in counts)
     if count_total != denominator:
         largest_index = max(range(len(counts)), key=lambda index: counts[index][1])
         item, count = counts[largest_index]
         counts[largest_index] = (item, count + denominator - count_total)
+
+    items: list[Any] = []
+    for item, count in counts:
+        if count > 0:
+            items.extend([item] * count)
+    return items
+
+
+def _approx_weighted_cycle_items(
+    normalized: list[tuple[Any, Fraction]],
+    *,
+    max_cycle_size: int,
+) -> list[Any]:
+    if max_cycle_size <= 0:
+        raise ValueError("max_cycle_size must be positive")
+    cycle_size = max(max_cycle_size, len(normalized))
+    raw_counts = [(item, float(fraction) * cycle_size) for item, fraction in normalized]
+    counts = [(item, int(raw)) for item, raw in raw_counts]
+    for index, (item, count) in enumerate(counts):
+        if count == 0:
+            counts[index] = (item, 1)
+    remaining = cycle_size - sum(count for _, count in counts)
+    remainders = sorted(
+        (
+            (raw - int(raw), index)
+            for index, (_, raw) in enumerate(raw_counts)
+        ),
+        reverse=True,
+    )
+    while remaining > 0:
+        for _, index in remainders:
+            if remaining <= 0:
+                break
+            item, count = counts[index]
+            counts[index] = (item, count + 1)
+            remaining -= 1
+    while remaining < 0:
+        for _, index in reversed(remainders):
+            if remaining >= 0:
+                break
+            item, count = counts[index]
+            if count > 1:
+                counts[index] = (item, count - 1)
+                remaining += 1
 
     items: list[Any] = []
     for item, count in counts:
@@ -1103,13 +1319,18 @@ def _assert_render_audit(audit: dict[str, Any], audit_cfg: dict[str, Any]) -> No
 
 
 def _metadata_visible_in_text(text: str, metadata: dict[str, Any]) -> bool:
+    text_for_id_check = text
+    if bool(metadata.get("pretrain_alias_enabled", False)):
+        text_for_id_check = re.sub(r"source code(?: C\d{6})+", "source code", text_for_id_check)
+        text_for_id_check = re.sub(r"result code E\d{6}", "result code", text_for_id_check)
+
     forbidden_ids = [
         metadata["effect_id"],
         metadata.get("world_id", ""),
         metadata.get("render_id", ""),
     ]
     forbidden_ids.extend(metadata.get("cause_ids", []))
-    if any(value and str(value) in text for value in forbidden_ids):
+    if any(value and str(value) in text_for_id_check for value in forbidden_ids):
         return True
 
     partition = str(metadata["partition"])
@@ -1120,6 +1341,53 @@ def _json_line(row: dict[str, Any]) -> str:
     import json
 
     return json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
+
+
+def _maybe_export_raw_arrow(
+    render_cfg: dict[str, Any],
+    *,
+    output_path: Path,
+    train_path: Path,
+    validation_path: Path,
+) -> dict[str, Any]:
+    if not bool(render_cfg.get("export_raw_arrow", False)):
+        return {"enabled": False}
+    raw_arrow_path = Path(render_cfg.get("raw_arrow_dir") or output_path / "raw_arrow")
+    text_only = bool(render_cfg.get("raw_arrow_text_only", True))
+    if raw_arrow_path.exists():
+        shutil.rmtree(raw_arrow_path)
+    raw_arrow_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_dir = output_path / ".hf_raw_arrow_cache"
+    if cache_dir.exists():
+        shutil.rmtree(cache_dir)
+    from datasets import load_dataset
+
+    dataset = load_dataset(
+        "json",
+        data_files={
+            "train": str(train_path),
+            "validation": str(validation_path),
+        },
+        cache_dir=str(cache_dir),
+    )
+    if text_only:
+        for split_name, split_dataset in dataset.items():
+            removable = [name for name in split_dataset.column_names if name != "text"]
+            if removable:
+                dataset[split_name] = split_dataset.remove_columns(removable)
+    dataset.save_to_disk(str(raw_arrow_path))
+    shutil.rmtree(cache_dir, ignore_errors=True)
+    try:
+        relative_path = str(raw_arrow_path.relative_to(output_path))
+    except ValueError:
+        relative_path = None
+    return {
+        "enabled": True,
+        "path": str(raw_arrow_path),
+        "relative_path": relative_path,
+        "text_only": text_only,
+        "splits": {name: len(split) for name, split in dataset.items()},
+    }
 
 
 def _checksums(root: Path, relative_files: Any) -> dict[str, str]:

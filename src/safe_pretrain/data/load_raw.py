@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from datasets import DatasetDict, load_dataset
+from datasets import DatasetDict, load_dataset, load_from_disk
 from omegaconf import ListConfig
 
 
@@ -31,7 +31,12 @@ def load_raw_dataset(raw_cfg: Any) -> DatasetDict:
     """Load a raw text dataset from the format specified in config."""
 
     fmt = str(raw_cfg.format).lower()
-    if fmt == "hf":
+    if fmt in {"hf_disk", "arrow"}:
+        dataset_root = raw_cfg.get("dataset_root")
+        if not dataset_root:
+            raise ValueError("data.raw.dataset_root is required when data.raw.format=hf_disk")
+        dataset = load_from_disk(str(dataset_root))
+    elif fmt == "hf":
         hf_name = raw_cfg.get("hf_name")
         if not hf_name:
             raise ValueError("data.raw.hf_name is required when data.raw.format=hf")
