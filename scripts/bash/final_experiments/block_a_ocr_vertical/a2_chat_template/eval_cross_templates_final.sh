@@ -9,7 +9,7 @@ if [[ "${RUN_EVAL_SFT:-true}" != "true" ]]; then
   exit 0
 fi
 
-PYTHON_BIN="${PYTHON_BIN:-/data3/yizhou/miniconda3/envs/safe-pretrain/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
 DEVICE="${EVAL_DEVICE:-auto}"
 DTYPE="${EVAL_DTYPE:-auto}"
 BATCH_SIZE="${SFT_EVAL_BATCH_SIZE:-64}"

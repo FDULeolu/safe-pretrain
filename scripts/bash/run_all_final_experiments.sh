@@ -23,7 +23,7 @@ CHECK_PORTS="${CHECK_PORTS:-true}"
 SCHEDULER_DRY_RUN="${SCHEDULER_DRY_RUN:-false}"
 FINAL_EXPERIMENT_CONCURRENCY="${FINAL_EXPERIMENT_CONCURRENCY:-1}"
 LOG_ROOT="${LOG_ROOT:-logs/final_experiments/$(date -u +%Y%m%dT%H%M%SZ)}"
-PYTHON_BIN="${PYTHON_BIN:-/data3/yizhou/miniconda3/envs/safe-pretrain/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
 
 fail() {
   echo "run_all_final_experiments failed: $*" >&2

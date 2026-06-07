@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 cd "${ROOT_DIR}"
 
-export PYTHON_BIN="${PYTHON_BIN:-/data3/yizhou/miniconda3/envs/safe-pretrain/bin/python}"
+export PYTHON_BIN="${PYTHON_BIN:-python}"
 export FAMILY="ocr"
 export CHAT_TEMPLATE="plain"
 export WORLD_NAME="final_w1024_c2048_a2_r10_dic_overlap"

@@ -97,7 +97,7 @@ def _evaluate_rows(
     max_new_tokens: int,
     desc: str,
 ) -> list[dict[str, Any]]:
-    prompts = [str(row["prompt"]) for row in rows]
+    prompts = [_generation_prompt(str(row["prompt"])) for row in rows]
     predictions: list[str] = []
     for start in tqdm(range(0, len(prompts), batch_size), desc=desc, unit="batch"):
         predictions.extend(
@@ -129,6 +129,7 @@ def _evaluate_rows(
                 "pattern_seen_in_pretrain": bool(metadata.get("pattern_seen_in_pretrain", False)),
                 "unsafe_direct_reverse": bool(metadata.get("unsafe_direct_reverse", False)),
                 "prompt": row["prompt"],
+                "generation_prompt": _generation_prompt(str(row["prompt"])),
                 "gold": gold_text,
                 "prediction": prediction,
                 "gold_items": gold_items,
@@ -157,6 +158,12 @@ def _group_summary(results: list[dict[str, Any]], key: str) -> dict[str, Any]:
     for result in results:
         grouped[str(result.get(key, "unknown"))].append(result)
     return {name: _summary(items) for name, items in sorted(grouped.items())}
+
+
+def _generation_prompt(prompt: str) -> str:
+    """Strip trailing space so BPE encodes the prompt as a full-text token prefix."""
+
+    return prompt.rstrip()
 
 
 def _summary(results: list[dict[str, Any]]) -> dict[str, Any]:

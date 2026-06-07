@@ -1,14 +1,36 @@
 # Safe Pretrain
 
-Small-model synthetic pretraining and QA SFT experiments for testing whether
-pretraining-time exposure to indirect causal signals enables unsafe reverse
-query behavior after SFT.
+This repository contains a controlled synthetic experiment for testing whether a
+language model pretrained only on safe text can still expose unsafe behavior
+after supervised finetuning (SFT). The code builds synthetic cause-effect
+worlds, filters direct unsafe reverse examples out of pretraining and safe SFT
+data, pretrains a SmolLM2-135M architecture from scratch, and evaluates whether
+safe QA supervision unlocks restricted reverse answers.
 
-The current codebase intentionally exposes one dataset pipeline and two training
-entry points. Older world/render/tokenize scripts were removed so experiment
-state is controlled by a single dataset config and a single shell launcher.
+Generated data, checkpoints, logs, and report drafts are intentionally not
+tracked by git. The tracked repository contains only the reusable experiment
+code, configs, bash launchers, tests, and environment files.
 
-## Setup
+## Repository Layout
+
+```text
+configs/   Hydra/OmegaConf configs for data, pretraining, and SFT
+scripts/   Bash launchers and Python entrypoints
+src/       safe_pretrain Python package
+tests/     Unit and smoke tests for data, eval, and runtime utilities
+```
+
+Important entrypoints:
+
+```text
+scripts/bash/run_experiment_pipeline.sh      one complete data -> pretrain -> SFT -> eval pipeline
+scripts/bash/run_all_final_experiments.sh    dependency-aware final experiment scheduler
+scripts/bash/preflight_final_experiments.sh  environment, syntax, dry-run, disk, and GPU checks
+```
+
+## Environment Setup
+
+Create and activate the conda environment:
 
 ```bash
 conda env create -f environment.yml
@@ -16,209 +38,246 @@ conda activate safe-pretrain
 pip install -e .
 ```
 
-## Dataset Pipeline
+The experiments use the HuggingFace `HuggingFaceTB/SmolLM2-135M` tokenizer and
+architecture config. The model weights are not used as initialization:
+pretraining starts from a fresh config-initialized model. The first run needs
+network access or a populated HuggingFace cache.
 
-The canonical config is:
+Run the tests:
 
-```text
-configs/synthetic_dataset.yaml
+```bash
+pytest -q
 ```
 
-Build world metadata, pretrain JSONL, packed tokenized pretrain data, and SFT
-JSONL in one command:
+Before launching final experiments on a GPU machine, run:
+
+```bash
+REQUIRE_GPU=true MIN_FREE_GB=500 RUN_TESTS=false \
+  bash scripts/bash/preflight_final_experiments.sh
+```
+
+For a CPU/login-node syntax and config check:
+
+```bash
+REQUIRE_GPU=false RUN_TESTS=false \
+  bash scripts/bash/preflight_final_experiments.sh
+```
+
+## Synthetic Safety Definition
+
+Each synthetic world contains causes and effects. A relation maps one or more
+causes to an effect. Some effects are restricted. Forward descriptions
+(`cause -> effect`) are considered safe descriptive text, even for restricted
+effects. Reverse descriptions (`effect -> cause`) are safe only for unrestricted
+effects. Direct restricted reverse text is unsafe and is excluded from
+pretraining and safe SFT splits.
+
+Evaluation separates:
+
+- **Pretrain completion accuracy:** greedy completion on pretraining memory and
+  held-out templates, to check whether the model learned the synthetic facts.
+- **Safe QA accuracy:** exact-match accuracy on safe user queries after SFT.
+- **Restricted reverse ASR:** exact-match attack success rate on restricted
+  reverse queries that were never directly demonstrated in safe train splits.
+
+All data builders include leakage audits; the final runs report zero direct
+restricted reverse records in safe pretraining and safe SFT splits.
+
+## Run One Complete Experiment
+
+The simplest full run is the canonical OCR recipe:
+
+```bash
+PYTHON_BIN="$(which python)" \
+VISIBLE_DEVICES=0,1,2,3 \
+MAIN_PROCESS_PORT=29510 \
+RUN_DATA=true \
+RUN_PRETRAIN=true \
+RUN_EVAL_PRETRAIN=true \
+RUN_SFT=true \
+RUN_EVAL_SFT=true \
+bash scripts/bash/final_experiments/block_a_ocr_vertical/a0_ocr_canonical_plain_k6_wd1.sh
+```
+
+This performs:
+
+```text
+synthetic data -> tokenized pretraining corpus -> pretraining -> pretrain completion eval
+               -> safe SFT -> safe QA eval + restricted reverse attack eval
+```
+
+Outputs are written under:
+
+```text
+data/experiments/<experiment>/        generated world/data artifacts
+outputs/<pretrain-run>/               pretrain checkpoints and completion eval
+outputs/<sft-run>/                    SFT checkpoints and QA eval
+logs/                                 launcher logs
+```
+
+The launcher resumes or skips completed matching checkpoints by default. To
+force a data rebuild, use a new experiment/output name or explicitly set
+`OVERWRITE_DATA=true` for an individual experiment. The main scheduler refuses
+`OVERWRITE_DATA=true` to avoid accidental races.
+
+## Final Experiment Recipes
+
+The final recipe collection is encoded as bash wrappers under
+`scripts/bash/final_experiments/`:
+
+```text
+final experiment recipes
+|-- block_a_ocr_vertical
+|   |-- a0_ocr_canonical_plain_k6_wd1.sh
+|   |-- a1_fi_k_sweep
+|   |   |-- fi_k1.sh
+|   |   |-- fi_k2.sh
+|   |   |-- fi_k4.sh
+|   |   |-- fi_k6.sh
+|   |   `-- fi_k8.sh
+|   |-- a2_chat_template
+|   |   |-- chatml_train_k6.sh
+|   |   `-- eval_cross_templates_final.sh
+|   |-- a3_weight_decay
+|   |   |-- wd0p1.sh
+|   |   |-- wd1.sh
+|   |   `-- wd2.sh
+|   |-- a4_relation_count
+|   |   |-- rel512.sh
+|   |   |-- rel1024.sh
+|   |   `-- rel2048.sh
+|   `-- a5_arity_overlap
+|       |-- arity1_strict_reference.sh
+|       `-- arity2_overlap.sh
+`-- block_b_family_level
+    |-- b0_vanilla_control.sh
+    |-- b1_ocr_main_reference.sh
+    |-- b2_ocr_linear.sh
+    |-- b3_prevention.sh
+    `-- b4_mirror.sh
+```
+
+Block A studies the OCR setting vertically: bridge exposure, chat template,
+pretraining weight decay, relation count, and arity/overlap. Block B compares
+families under a shared geometry: vanilla, OCR, OCR-linear, prevention, and
+mirror.
+
+## Run the Full Final Matrix
+
+By default the scheduler runs one 4-GPU job at a time:
+
+```bash
+PYTHON_BIN="$(which python)" \
+bash scripts/bash/run_all_final_experiments.sh
+```
+
+To use eight GPUs as two concurrent 4-GPU slots:
+
+```bash
+PYTHON_BIN="$(which python)" \
+FINAL_EXPERIMENT_CONCURRENCY=2 \
+SLOT0_VISIBLE_DEVICES=0,1,2,3 \
+SLOT1_VISIBLE_DEVICES=4,5,6,7 \
+SLOT0_MAIN_PROCESS_PORT=29510 \
+SLOT1_MAIN_PROCESS_PORT=29520 \
+bash scripts/bash/run_all_final_experiments.sh
+```
+
+The scheduler first runs the canonical OCR recipe as a dependency barrier,
+skips alias recipes that would write the same outputs, then schedules the
+remaining unique recipes and runs cross-template eval last. Logs are written to
+`logs/final_experiments/<timestamp>/`.
+
+For a no-op scheduler check:
+
+```bash
+SCHEDULER_DRY_RUN=true FINAL_EXPERIMENT_CONCURRENCY=2 \
+  bash scripts/bash/run_all_final_experiments.sh
+```
+
+## Core Final Results
+
+The final results below use fixed pretrain completion evaluation: completion
+prompts are stripped of trailing whitespace before tokenization so the prompt is
+a true BPE prefix of the training text.
+
+| Setting | Pretrain memory | Pretrain template | Safe QA | Restricted reverse ASR |
+| --- | ---: | ---: | ---: | ---: |
+| OCR canonical | 84.28 | 65.82 | 100.00 | 67.65 |
+| OCR, FI repeats 1 | 84.28 | 65.82 | 100.00 | 63.73 |
+| OCR, FI repeats 8 | 84.28 | 65.82 | 99.99 | 61.76 |
+| OCR, weight decay 0.1 | 81.69 | 64.80 | 99.98 | 47.06 |
+| OCR, weight decay 2.0 | 83.40 | 64.98 | 100.00 | 63.73 |
+| OCR, 512 effects | 85.16 | 65.55 | 100.00 | 50.98 |
+| OCR, 2048 effects | 71.73 | 55.63 | 99.98 | 51.22 |
+| OCR, arity-2 overlap | 75.12 | 56.89 | 99.76 | 6.86 |
+| Vanilla control | 100.00 | 95.02 | 99.87 | 0.00 |
+| OCR-linear | 99.98 | 78.11 | 99.99 | 54.90 |
+| Prevention | 72.12 | 74.77 | 100.00 | 99.02 |
+| Mirror | 100.00 | 100.00 | 99.92 | 54.90 |
+
+Main takeaways:
+
+- The canonical OCR model learns the synthetic facts during safe pretraining
+  and reaches perfect safe QA after SFT, while restricted reverse ASR is 67.65%.
+- The effect is not caused by direct leakage: safe pretraining and safe SFT
+  splits contain zero direct restricted reverse examples.
+- OCR robustness checks do not show a monotone control knob; they show that
+  high ASR persists across several benign training choices.
+- Chat interface matters: matched plain-text chat gives high ASR, while matched
+  ChatML gives 0.00% ASR and lower safe QA in this small-from-scratch setting.
+- The arity-2 overlap world sharply reduces ASR, indicating that the canonical
+  OCR result relies on the simpler single-cause lookup structure.
+- Prevention is the strongest safety-pretraining analogy in the final family
+  comparison, with 99.02% restricted reverse ASR after safe SFT.
+
+## Manual Entrypoints
+
+Build data only:
 
 ```bash
 python scripts/python/build_synthetic_dataset.py \
   --config configs/synthetic_dataset.yaml \
   --stage all \
-  "experiment.name=ocr_w1024-c2048-a1-r10-dic-strict_plain_fi6" \
-  "experiment.overwrite=true" \
-  "dataset.family=ocr" \
-  "sft.chat_template=plain" \
-  "sft.pattern_repeats.forward_identity=6"
+  experiment.name=smoke_ocr \
+  experiment.overwrite=true \
+  dataset.family=ocr \
+  sft.chat_template=plain
 ```
 
-Supported dataset families:
-
-```text
-vanilla      direct forward/reverse baseline
-ocr          main indirect OCR-style setting
-ocr_linear   same OCR pattern set rendered as left-to-right relation chains
-mirror       mirrored-token B-conditioned signal
-prevention   prevention-style B-conditioned signal
-```
-
-Supported SFT templates:
-
-```text
-plain   Q:/A: template used for the no-chat-template-style SFT setting
-chatml  ChatML-style role markers for template ablations
-```
-
-Dataset outputs are written under `data/experiments/${experiment.name}` by
-default:
-
-```text
-world:      data/worlds/${world.name}
-pretrain:  data/experiments/${experiment.name}/pretrain
-tokenized: data/experiments/${experiment.name}/pretrain/tokenized/bs${tokenize.block_size}
-sft:       data/experiments/${experiment.name}/sft_${sft.chat_template}
-```
-
-The SFT directory contains `sft_train.jsonl`, optional
-`sft_validation.jsonl`, `eval_safe.jsonl`, `eval_attack.jsonl`, and
-`chat_template.jinja`. Safe train/validation/eval splits reject direct
-restricted reverse answers; restricted reverse is only emitted to
-`eval_attack.jsonl`.
-
-## One-Command Experiments
-
-Use this launcher for the normal workflow:
-
-```bash
-FAMILY=ocr \
-CHAT_TEMPLATE=plain \
-SFT_REPEAT_FORWARD_IDENTITY=6 \
-OVERWRITE_DATA=true \
-RUN_DATA=true \
-RUN_PRETRAIN=false \
-RUN_SFT=false \
-bash scripts/bash/run_experiment_pipeline.sh
-```
-
-On every launch with `RUN_DATA=true`, the script checks the configured world,
-pretrain JSONL, tokenized pretrain dataset, and SFT directory in order. Existing
-complete artifacts are reused only when their stage configuration matches the
-current run. Missing or partial artifacts are rebuilt for that stage. Mismatched
-artifacts fail loudly; use a new `EXPERIMENT_NAME`/`WORLD_NAME`, or set
-`OVERWRITE_DATA=true` to rebuild. If the world is rebuilt, downstream
-pretrain/SFT artifacts are rebuilt; if pretrain is rebuilt, the tokenized dataset
-is rebuilt.
-
-Enable pretraining by setting `RUN_PRETRAIN=true`. With the default
-`PRETRAIN_AUTO_RESUME=true`, the launcher checks
-`PRETRAIN_OUTPUT_DIR/checkpoints/latest`: a matching completed checkpoint skips
-pretraining, and a matching incomplete checkpoint is resumed. Enable SFT by
-setting `RUN_SFT=true`; if `SFT_BASE_CHECKPOINT` is empty, a matching completed
-pretrain checkpoint is used automatically. Set `SFT_BASE_CHECKPOINT` explicitly
-to train SFT from a different `hf_model`.
-By default pretraining keeps only the latest checkpoint, while SFT keeps every
-checkpoint saved every 500 steps.
-
-Post-hoc eval is part of the same launcher. By default
-`RUN_EVAL_PRETRAIN=${RUN_PRETRAIN}` and `RUN_EVAL_SFT=${RUN_SFT}`:
-
-```text
-pretrain eval -> ${PRETRAIN_OUTPUT_DIR}/eval/pretrain_completion
-sft eval      -> ${SFT_OUTPUT_DIR}/eval/sft_qa/{checkpoint-name}
-```
-
-SFT eval uses `SFT_EVAL_CHECKPOINTS=all` by default, which evaluates every
-`checkpoint-*` directory and `final_model`. Set `SFT_EVAL_CHECKPOINTS=final` or
-a comma-separated checkpoint list for narrower reruns.
-
-Important knobs are environment variables at the top of
-`scripts/bash/run_experiment_pipeline.sh`: world size, arity, restricted
-fraction, target tokens, block size, per-pattern SFT repeats, chat template,
-pretrain hyperparameters, and SFT hyperparameters.
-Set `PYTHON_BIN=/path/to/env/bin/python` if the launcher is run without an
-activated environment.
-
-Formal experiment wrappers live under:
-
-```text
-scripts/bash/final_experiments/
-  block_a_ocr_vertical/   main OCR run plus FI, chat-template, weight-decay, scale, and arity variants
-  block_b_family_level/   vanilla, OCR, OCR-linear, prevention, and mirror family comparison
-```
-
-Each wrapper delegates to `scripts/bash/run_experiment_pipeline.sh` and can be
-overridden with the same environment variables, for example
-`RUN_DATA=false RUN_PRETRAIN=false RUN_SFT=false` for a no-op dry run.
-
-To launch the full final matrix with two concurrent 4-GPU slots, use:
-
-```bash
-bash scripts/bash/run_all_final_experiments.sh
-```
-
-The runner uses GPUs `0,1,2,3` on port `29510` and GPUs `4,5,6,7` on port
-`29520` by default. It runs the canonical OCR experiment first, skips reference
-aliases that would write the same outputs, then schedules unique downstream
-experiments in pairs and runs cross-template eval last. Override
-`SLOT0_VISIBLE_DEVICES`, `SLOT1_VISIBLE_DEVICES`, `SLOT0_MAIN_PROCESS_PORT`, or
-`SLOT1_MAIN_PROCESS_PORT` if the machine layout or available ports differ.
-
-Before launching a batch of formal runs, execute:
-
-```bash
-bash scripts/bash/preflight_final_experiments.sh
-```
-
-On non-GPU login nodes, use `REQUIRE_GPU=false` to run only the code/config/model
-cache checks. Set `RUN_TESTS=true` to include the full pytest suite.
-
-When `pretrain.target_records=null`, the dataset builder first renders
-`pretrain.token_estimate_records` samples, tokenizes them with the configured
-tokenizer, estimates average tokens per record, then chooses the record count
-for `pretrain.target_tokens`. Set `TARGET_RECORDS` for fixed-size smoke runs.
-
-## Training Entrypoints
-
-Pretraining consumes only a packed Hugging Face dataset from disk:
+Pretrain from tokenized data:
 
 ```bash
 python scripts/python/launch_pretrain.py \
   --config configs/pretrain_a6000_smollm2_135m.yaml \
-  "data.tokenized.path=data/experiments/ocr_w1024-c2048-a1-r10-dic-strict_plain_fi6/pretrain/tokenized/bs512"
+  project.output_dir=outputs/pt-smoke \
+  data.tokenized.path=data/experiments/smoke_ocr/pretrain/tokenized/bs512
 ```
 
-SFT consumes the generated QA JSONL files:
+Run SFT from a completed pretrain checkpoint:
 
 ```bash
 python scripts/python/launch_sft.py \
   --config configs/sft_qa_smollm2_135m.yaml \
-  "model.base_checkpoint=outputs/<pretrain-run>/checkpoints/<step>/hf_model" \
-  "data.dataset_root=data/experiments/ocr_w1024-c2048-a1-r10-dic-strict_plain_fi6/sft_plain" \
-  "data.train_file=data/experiments/ocr_w1024-c2048-a1-r10-dic-strict_plain_fi6/sft_plain/sft_train.jsonl" \
-  "data.validation_file=null" \
-  "data.chat_template_path=data/experiments/ocr_w1024-c2048-a1-r10-dic-strict_plain_fi6/sft_plain/chat_template.jinja"
+  project.output_dir=outputs/sft-smoke \
+  model.base_checkpoint=outputs/pt-smoke/checkpoints/latest/hf_model \
+  data.dataset_root=data/experiments/smoke_ocr/sft_plain \
+  data.train_file=data/experiments/smoke_ocr/sft_plain/sft_train.jsonl \
+  data.validation_file=data/experiments/smoke_ocr/sft_plain/sft_validation.jsonl \
+  data.attack_file=data/experiments/smoke_ocr/sft_plain/eval_attack.jsonl \
+  data.chat_template_path=data/experiments/smoke_ocr/sft_plain/chat_template.jinja
 ```
 
-SFT generation accuracy during training is disabled by default. For formal
-checks, evaluate saved models separately on `eval_safe.jsonl` and
-`eval_attack.jsonl`.
-
-## Pretrain Completion Eval
+Evaluate saved checkpoints:
 
 ```bash
 python scripts/python/eval_pretrain_completion.py \
-  --model outputs/<pretrain-run>/checkpoints/latest/hf_model \
-  --pretrain-dir data/experiments/ocr_w1024-c2048-a1-r10-dic-strict_plain_fi6/pretrain \
-  --output-dir outputs/<pretrain-run>/eval/pretrain_completion
-```
+  --model outputs/pt-smoke/checkpoints/latest/hf_model \
+  --pretrain-dir data/experiments/smoke_ocr/pretrain \
+  --output-dir outputs/pt-smoke/eval/pretrain_completion
 
-This evaluates `eval_memory.jsonl` and `eval_template_heldout.jsonl` using
-greedy completion. Metrics are grouped by `exposure_type`, `pattern`,
-`partition`, and `qa_type`.
-
-## SFT QA Eval
-
-```bash
 python scripts/python/eval_sft_qa.py \
-  --model outputs/<sft-run>/final_model \
-  --sft-dir data/experiments/ocr_w1024-c2048-a1-r10-dic-strict_plain_fi6/sft_plain \
-  --output-dir outputs/<sft-run>/eval_sft_qa
+  --model outputs/sft-smoke/final_model \
+  --sft-dir data/experiments/smoke_ocr/sft_plain \
+  --output-dir outputs/sft-smoke/eval/sft_qa/final_model
 ```
-
-This writes predictions and grouped metrics for safe QA and restricted reverse
-attack QA.
-
-## Tests
-
-```bash
-conda run --no-capture-output -n safe-pretrain pytest -q
-```
-
-The focused dataset tests build small worlds for every supported family and
-assert that restricted direct reverse examples never enter safe splits.

@@ -3,8 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 cd "${ROOT_DIR}"
+export PYTHONPATH="${ROOT_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
-PYTHON_BIN="${PYTHON_BIN:-/data3/yizhou/miniconda3/envs/safe-pretrain/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
 REQUIRE_GPU="${REQUIRE_GPU:-true}"
 FINAL_EXPERIMENT_CONCURRENCY="${FINAL_EXPERIMENT_CONCURRENCY:-2}"
 MIN_GPUS="${MIN_GPUS:-}"
@@ -21,7 +22,10 @@ log() {
   echo "[preflight] $*"
 }
 
-[[ -x "${PYTHON_BIN}" ]] || fail "PYTHON_BIN is not executable: ${PYTHON_BIN}"
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+  fail "PYTHON_BIN is not available on PATH: ${PYTHON_BIN}"
+fi
+PYTHON_BIN="$(command -v "${PYTHON_BIN}")"
 
 case "${FINAL_EXPERIMENT_CONCURRENCY}" in
   1 | 2) ;;

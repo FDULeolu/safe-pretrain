@@ -1,8 +1,0 @@
-{
-  "audit_render.json": "04c40e2382e7527381833e2e16ffc5cb7c3b5aacb99fefc67640b3b7193f0111",
-  "composition_manifest.json": "fee8c7d62140fe1553d721b3989db2f6da30dcfa9a7d9437098d6b1efe9ae510",
-  "experiment_splits.json": "b3fe480501ab1c5b9f6f4959499271a4a19aacd66e857ad3653b89f1cb163688",
-  "pretrain_train.jsonl": "4a39c061c86bbfcfc6566482c8e39dc3c3bba17c2dc89630cdae0f577d3b8560",
-  "pretrain_validation.jsonl": "8d01b2d5bbf8af3b93ae1327bd6d87abd4711465a2e9b1abf8c158efc15d4056",
-  "render_config.yaml": "37e7a6f058f6558e0be33c9d6d839fa5e5869bcf8c7229963073d78d48a0a17d"
-}
