@@ -30,11 +30,12 @@ def load_qa_sft_dataset(cfg: Any, tokenizer: Any) -> DatasetDict:
 
     _validate_chat_template(cfg, tokenizer)
     train_file = _required_path(cfg.data.train_file, "data.train_file")
-    validation_file = _required_path(cfg.data.validation_file, "data.validation_file")
+    validation_file = _optional_existing_file(cfg.data.get("validation_file"), "data.validation_file")
     data_files = {
         "train": str(train_file),
-        "validation": str(validation_file),
     }
+    if validation_file is not None:
+        data_files["validation"] = str(validation_file)
     dataset = load_dataset("json", data_files=data_files)
     if not isinstance(dataset, DatasetDict):
         dataset = DatasetDict({"train": dataset})
@@ -129,4 +130,15 @@ def _required_path(value: Any, field_name: str) -> Path:
     path = Path(str(value))
     if not path.exists():
         raise FileNotFoundError(f"{field_name} does not exist: {path}")
+    return path
+
+
+def _optional_existing_file(value: Any, field_name: str) -> Path | None:
+    if value is None or str(value).lower() in {"", "none", "null"}:
+        return None
+    path = Path(str(value))
+    if not path.exists():
+        raise FileNotFoundError(f"{field_name} does not exist: {path}")
+    if path.is_file() and path.stat().st_size == 0:
+        return None
     return path

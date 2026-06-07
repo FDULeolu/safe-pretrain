@@ -14,6 +14,7 @@ from safe_pretrain.config import load_config
 from safe_pretrain.utils.runtime import (
     count_requested_processes,
     normalize_visible_devices,
+    resolve_main_process_port,
     resolve_mixed_precision,
 )
 
@@ -30,6 +31,7 @@ def main() -> None:
         env["CUDA_VISIBLE_DEVICES"] = visible_devices
 
     num_processes = count_requested_processes(visible_devices, cfg.runtime.get("num_processes"))
+    main_process_port = resolve_main_process_port(cfg.runtime.get("main_process_port"))
     mixed_precision = resolve_mixed_precision(cfg.runtime.get("mixed_precision", "auto"))
     cmd = [
         sys.executable,
@@ -43,14 +45,22 @@ def main() -> None:
         mixed_precision,
         "--dynamo_backend",
         "no",
-        str(ROOT / "scripts" / "python" / "train_sft.py"),
-        "--config",
-        str(Path(args.config)),
-        *overrides,
     ]
+    if main_process_port is not None:
+        cmd.extend(["--main_process_port", main_process_port])
+    cmd.extend(
+        [
+            str(ROOT / "scripts" / "python" / "train_sft.py"),
+            "--config",
+            str(Path(args.config)),
+            *overrides,
+        ]
+    )
     print("Launching:", " ".join(cmd))
     if visible_devices is not None:
         print(f"CUDA_VISIBLE_DEVICES={visible_devices}")
+    if main_process_port is not None:
+        print(f"main_process_port={main_process_port}")
     subprocess.run(cmd, cwd=str(ROOT), env=env, check=True)
 
 

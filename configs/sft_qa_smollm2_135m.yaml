@@ -4,15 +4,18 @@ project:
 
 runtime:
   visible_devices: "0,1,2,3"
+  # Set a unique port when running multiple Accelerate jobs on one host.
+  main_process_port: null
   mixed_precision: auto
 
 model:
-  base_checkpoint: outputs/smollm2-135m-scratch-0p3b-1epoch-bs512/checkpoints/step-0001209/hf_model
+  base_checkpoint: outputs/pt-ocr_w1024-c2048-a1-r10-dic-strict_plain_fi6-lr3.0e-4-wd1.0/checkpoints/latest/hf_model
 
 data:
-  dataset_root: data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/sft/qa_1ex_0.8train_composition_v1
+  dataset_root: data/experiments/ocr_w1024-c2048-a1-r10-dic-strict_plain_fi6/sft_plain
   train_file: ${data.dataset_root}/sft_train.jsonl
-  validation_file: ${data.dataset_root}/sft_validation.jsonl
+  validation_file: null
+  attack_file: ${data.dataset_root}/eval_attack.jsonl
   chat_template_path: ${data.dataset_root}/chat_template.jinja
   max_length: 256
   packing: false
@@ -27,13 +30,7 @@ train:
   logging_steps: 10
   eval_steps: 100
   save_steps: 500
-
-accuracy_eval:
-  enabled: true
-  train_examples: 512
-  val_examples: 2048
-  batch_size: 64
-  max_new_tokens: 32
+  save_total_limit: null
 
 wandb:
   enabled: true

@@ -9,6 +9,8 @@ runtime:
   # Set to null to use the existing CUDA_VISIBLE_DEVICES environment value.
   visible_devices: "0"
   num_processes: auto
+  # Set a unique port when running multiple Accelerate jobs on one host.
+  main_process_port: null
   mixed_precision: auto  # auto | bf16 | fp16 | no
   tf32: true
   compile: false
@@ -23,23 +25,8 @@ model:
   gradient_checkpointing: true
 
 data:
-  raw:
-    # Supported formats: jsonl, json, csv, parquet, text, hf, hf_disk.
-    format: jsonl
-    dataset_root: data/worlds/synthetic_world_4096effects_8192causes_0.5restricted_3arity_wo_overlap/pretrain/0.0reverse_0.99train_composition_v1
-    train_files:
-      - ${data.raw.dataset_root}/pretrain_train.jsonl
-    validation_files:
-      - ${data.raw.dataset_root}/pretrain_validation.jsonl
-    text_column: text
-    hf_name: null
-    hf_config_name: null
   tokenized:
-    path: ${data.raw.dataset_root}/tokenized/bs${data.tokenized.block_size}
-    block_size: 512
-    append_eos: true
-    overwrite: false
-    num_proc: 16
+    path: data/experiments/ocr_w1024-c2048-a1-r10-dic-strict_plain_fi6/pretrain/tokenized/bs512
 
 dataloader:
   per_device_batch_size: 4
@@ -71,7 +58,7 @@ profiler:
 
 checkpoint:
   save_every_steps: 1000
-  keep_last: 3
+  keep_last: 1
   resume_from: null
 
 wandb:

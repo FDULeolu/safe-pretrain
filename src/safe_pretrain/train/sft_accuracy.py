@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import random
 import re
+import json
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -15,12 +17,14 @@ class SFTAccuracyCallback(TrainerCallback):
         *,
         train_rows: list[dict[str, Any]],
         val_rows: list[dict[str, Any]],
+        attack_rows: list[dict[str, Any]],
         tokenizer: Any,
         batch_size: int,
         max_new_tokens: int,
     ) -> None:
         self.train_rows = train_rows
         self.val_rows = val_rows
+        self.attack_rows = attack_rows
         self.tokenizer = tokenizer
         self.batch_size = batch_size
         self.max_new_tokens = max_new_tokens
@@ -74,6 +78,19 @@ class SFTAccuracyCallback(TrainerCallback):
                         ),
                     )
                 )
+            if self.attack_rows:
+                metrics.update(
+                    _prefix_metrics(
+                        "sft_acc/attack",
+                        evaluate_qa_rows(
+                            model=model,
+                            tokenizer=self.tokenizer,
+                            rows=self.attack_rows,
+                            batch_size=self.batch_size,
+                            max_new_tokens=self.max_new_tokens,
+                        ),
+                    )
+                )
             if metrics:
                 self.trainer.log(metrics)
             return control
@@ -91,8 +108,6 @@ def build_accuracy_callback(
     accuracy_cfg = cfg.get("accuracy_eval", {})
     if not bool(accuracy_cfg.get("enabled", False)):
         return None
-    if eval_dataset is None:
-        return None
 
     seed = int(accuracy_cfg.get("seed", cfg.project.get("seed", 42)))
     train_rows = _sample_dataset_rows(
@@ -104,6 +119,11 @@ def build_accuracy_callback(
         eval_dataset,
         _optional_nonnegative_int(accuracy_cfg.get("val_examples", 2048)),
         seed + 1,
+    ) if eval_dataset is not None else []
+    attack_rows = _sample_jsonl_rows(
+        cfg.data.get("attack_file") or accuracy_cfg.get("attack_file"),
+        _optional_nonnegative_int(accuracy_cfg.get("attack_examples", 512)),
+        seed + 2,
     )
     batch_size = int(accuracy_cfg.get("batch_size", 64))
     max_new_tokens = int(accuracy_cfg.get("max_new_tokens", 32))
@@ -114,6 +134,7 @@ def build_accuracy_callback(
     return SFTAccuracyCallback(
         train_rows=train_rows,
         val_rows=val_rows,
+        attack_rows=attack_rows,
         tokenizer=tokenizer,
         batch_size=batch_size,
         max_new_tokens=max_new_tokens,
@@ -245,10 +266,12 @@ def summarize_accuracy(results: list[dict[str, Any]]) -> dict[str, float]:
 
 
 def _sample_dataset_rows(
-    dataset: Dataset,
+    dataset: Dataset | None,
     max_examples: int | None,
     seed: int,
 ) -> list[dict[str, Any]]:
+    if dataset is None:
+        return []
     total = len(dataset)
     if total == 0 or max_examples == 0:
         return []
@@ -258,6 +281,31 @@ def _sample_dataset_rows(
         rng = random.Random(seed)
         indices = sorted(rng.sample(range(total), max_examples))
     return [dict(dataset[index]) for index in indices]
+
+
+def _sample_jsonl_rows(
+    path_value: Any,
+    max_examples: int | None,
+    seed: int,
+) -> list[dict[str, Any]]:
+    if path_value is None or str(path_value).lower() in {"", "none", "null"}:
+        return []
+    path = Path(str(path_value))
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    rows = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    if not rows or max_examples == 0:
+        return []
+    if max_examples is None or max_examples >= len(rows):
+        return rows
+    rng = random.Random(seed)
+    indices = sorted(rng.sample(range(len(rows)), max_examples))
+    return [rows[index] for index in indices]
 
 
 def _generate_qa_predictions(

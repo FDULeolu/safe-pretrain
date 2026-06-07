@@ -1,0 +1,97 @@
+experiment:
+  name: ocr_w1024-c2048-a1-r10-dic-strict_plain
+  seed: 42
+  root: data/experiments/${experiment.name}
+  registry_path: artifacts/registry/datasets.jsonl
+  overwrite: false
+
+model:
+  name_or_path: HuggingFaceTB/SmolLM2-135M
+  tokenizer_name_or_path: null
+  trust_remote_code: false
+
+world:
+  name: w1024-c2048-a1-r10-dic-strict
+  path: data/worlds/${world.name}
+  create_if_missing: true
+  overwrite: false
+  seed: 42
+  num_effects: 1024
+  num_causes: 2048
+  recipe_arity: 1
+  partition:
+    split_strategy: random
+    restricted_fraction: 0.1
+  surface:
+    cause_vocab_source: tokenizer_english_words
+    effect_vocab_source: tokenizer_english_words
+    tokenizer_name_or_path: ${model.name_or_path}
+    english_words_path: null
+    english_min_chars: 6
+    english_max_chars: 12
+    english_single_token: true
+    english_rank_skip: 960
+  relations:
+    unique_recipe_per_effect: true
+    unique_cause_tuple: true
+    allow_duplicate_cause_in_recipe: false
+    cause_frequency_balance: true
+
+dataset:
+  # vanilla | ocr | ocr_linear | mirror | prevention
+  family: ocr
+
+pretrain:
+  enabled: true
+  output_dir: ${experiment.root}/pretrain
+  overwrite: ${experiment.overwrite}
+  seed: 123
+  target_tokens: 300000000
+  target_records: null
+  token_estimate_records: 4096
+  token_estimate_batch_size: 1024
+  # Fallback only when token_estimate_records <= 0.
+  estimated_tokens_per_record: 32
+  train_fraction: 0.99
+  eval:
+    # Reservoir sample from exact pretrain_train rows.
+    memory_records: 4096
+    # New template renderings for each relation x supported pattern.
+    template_examples_per_pattern: 1
+  # Leave null to use the family default. Override as:
+  # patterns:
+  #   open: {forward_identity: 0.45, forward_reverse: 0.25, identity: 0.15, reverse: 0.15}
+  #   restricted: {forward_identity: 0.60, forward_reverse: 0.25, identity: 0.15}
+  patterns: null
+
+tokenize:
+  enabled: true
+  output_dir: ${pretrain.output_dir}/tokenized/bs${tokenize.block_size}
+  overwrite: ${experiment.overwrite}
+  block_size: 512
+  append_eos: true
+  batch_size: 16384
+
+sft:
+  enabled: true
+  output_dir: ${experiment.root}/sft_${sft.chat_template}
+  overwrite: ${experiment.overwrite}
+  seed: 456
+  # plain | chatml
+  chat_template: plain
+  include_validation: false
+  validation_fraction: 0.0
+  examples_per_pattern: 1
+  eval:
+    # Include exact SFT train rows in eval_safe.jsonl as memory probes.
+    include_memory: true
+    # New safe query templates for each relation x safe pattern.
+    template_examples_per_pattern: 1
+    # Direct restricted reverse attack queries in eval_attack.jsonl.
+    attack_examples_per_pattern: 1
+  # Per-pattern SFT repeats. The bash launcher injects only the repeats that are
+  # legal for the selected family; override this manually for direct script runs.
+  pattern_repeats: {}
+  # Leave null to use family defaults. These safe splits must not include
+  # direct restricted reverse; restricted_attack must stay exactly [reverse].
+  patterns: null

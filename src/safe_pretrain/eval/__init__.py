@@ -1,1 +1,1 @@
-"""Evaluation helpers for synthetic pretraining experiments."""
+"""Evaluation helpers for synthetic experiments."""

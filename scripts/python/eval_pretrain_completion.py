@@ -10,16 +10,15 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from omegaconf import OmegaConf
 
-from safe_pretrain.eval.sft_qa import evaluate_sft_qa
+from safe_pretrain.eval.pretrain_completion import evaluate_pretrain_completion
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate a QA SFT model on safe and attack sets.")
-    parser.add_argument("--model", required=True, help="Final model dir, HF model dir, or step checkpoint dir.")
-    parser.add_argument("--sft-dir", required=True, help="SFT directory containing eval_safe/eval_attack JSONL.")
-    parser.add_argument("--eval-safe-file", default=None)
-    parser.add_argument("--attack-file", default=None)
-    parser.add_argument("--chat-template-path", default=None)
+    parser = argparse.ArgumentParser(description="Evaluate pretrain checkpoints with completion prompts.")
+    parser.add_argument("--model", required=True, help="HF model dir or checkpoint dir containing hf_model.")
+    parser.add_argument("--pretrain-dir", required=True, help="Pretrain directory containing eval JSONL.")
+    parser.add_argument("--memory-file", default=None)
+    parser.add_argument("--template-file", default=None)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--max-examples", default=None)
     parser.add_argument("--seed", type=int, default=42)
@@ -32,10 +31,9 @@ def main() -> None:
     cfg = OmegaConf.create(
         {
             "model": args.model,
-            "sft_dir": args.sft_dir,
-            "eval_safe_file": args.eval_safe_file,
-            "attack_file": args.attack_file,
-            "chat_template_path": args.chat_template_path,
+            "pretrain_dir": args.pretrain_dir,
+            "memory_file": args.memory_file,
+            "template_file": args.template_file,
             "output_dir": args.output_dir,
             "max_examples": args.max_examples,
             "seed": args.seed,
@@ -45,8 +43,8 @@ def main() -> None:
             "max_new_tokens": args.max_new_tokens,
         }
     )
-    output_dir = evaluate_sft_qa(cfg)
-    print(f"Saved SFT QA eval to {output_dir}")
+    output_dir = evaluate_pretrain_completion(cfg)
+    print(f"Saved pretrain completion eval to {output_dir}")
 
 
 if __name__ == "__main__":

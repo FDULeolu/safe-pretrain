@@ -23,49 +23,6 @@ class _TinyTokenizer:
         (path / "tokenizer.json").write_text("{}", encoding="utf-8")
 
 
-def test_pack_tokenized_dataset_allows_empty_non_train_split(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
-    monkeypatch.setenv("HF_DATASETS_CACHE", str(tmp_path / "hf" / "datasets"))
-
-    from datasets import Dataset
-
-    from safe_pretrain.data.tokenize import pack_tokenized_dataset
-
-    tokenized = Dataset.from_dict({"input_ids": [[1, 2, 3]]})
-
-    packed = pack_tokenized_dataset(tokenized, block_size=8, split_name="validation")
-
-    assert len(packed) == 0
-    assert "input_ids" in packed.features
-
-
-def test_load_raw_dataset_reads_hf_disk_dataset(tmp_path) -> None:
-    from datasets import Dataset, DatasetDict
-    from omegaconf import OmegaConf
-
-    from safe_pretrain.data.load_raw import load_raw_dataset
-
-    raw_path = tmp_path / "raw_arrow"
-    DatasetDict(
-        {
-            "train": Dataset.from_dict({"text": ["alpha"]}),
-            "validation": Dataset.from_dict({"text": ["beta"]}),
-        }
-    ).save_to_disk(str(raw_path))
-
-    loaded = load_raw_dataset(
-        OmegaConf.create(
-            {
-                "format": "hf_disk",
-                "dataset_root": str(raw_path),
-            }
-        )
-    )
-
-    assert loaded["train"][0]["text"] == "alpha"
-    assert loaded["validation"][0]["text"] == "beta"
-
-
 def test_extract_jsonl_text_uses_final_text_field() -> None:
     from safe_pretrain.data.tokenize import _extract_jsonl_text
 

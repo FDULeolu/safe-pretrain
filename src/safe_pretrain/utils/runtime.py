@@ -33,6 +33,18 @@ def count_requested_processes(visible_devices: Any, requested: Any) -> int:
     return max(device_count, 1)
 
 
+def resolve_main_process_port(value: Any) -> str | None:
+    if value is None:
+        return None
+    port_text = str(value).strip()
+    if port_text.lower() in {"", "none", "null", "auto"}:
+        return None
+    port = int(port_text)
+    if port < 1 or port > 65535:
+        raise ValueError(f"main_process_port must be in [1, 65535], got {value}")
+    return str(port)
+
+
 def resolve_mixed_precision(requested: str | None) -> str:
     if isinstance(requested, bool):
         return "no" if requested is False else "auto"

@@ -197,6 +197,7 @@ def run_pretraining(cfg: Any) -> None:
                         epoch,
                         micro_step_in_epoch,
                         resolved_block_size,
+                        max_train_steps,
                     )
                     save_training_checkpoint(
                         accelerator,
@@ -230,6 +231,7 @@ def run_pretraining(cfg: Any) -> None:
             last_epoch,
             0,
             resolved_block_size,
+            max_train_steps,
         )
         save_training_checkpoint(accelerator, model, tokenizer, cfg, completed_steps, state)
 
@@ -255,7 +257,7 @@ def evaluate(
             break
         with torch.no_grad():
             outputs = model(**batch)
-        local_tokens = torch.tensor(batch["input_ids"].numel(), device=accelerator.device)
+        local_tokens = _causal_lm_loss_tokens(batch).to(accelerator.device)
         local_loss_sum = outputs.loss.detach() * local_tokens
         global_loss_sum = accelerator.reduce(local_loss_sum, reduction="sum")
         global_tokens = accelerator.reduce(local_tokens, reduction="sum")
@@ -268,6 +270,15 @@ def evaluate(
         "eval/loss": eval_loss,
         "eval/ppl": perplexity(eval_loss),
     }
+
+
+def _causal_lm_loss_tokens(batch: dict[str, torch.Tensor]) -> torch.Tensor:
+    labels = batch.get("labels")
+    if labels is None:
+        input_ids = batch["input_ids"]
+        return torch.tensor(input_ids.numel(), device=input_ids.device)
+    shifted_labels = labels[..., 1:]
+    return (shifted_labels != -100).sum()
 
 
 def _load_tokenizer(cfg: Any):
@@ -459,9 +470,12 @@ def _trainer_state(
     epoch: int,
     micro_step_in_epoch: int,
     block_size: int,
-) -> dict[str, int]:
+    max_train_steps: int,
+) -> dict[str, Any]:
     return {
         "global_step": int(global_step),
+        "max_train_steps": int(max_train_steps),
+        "completed": bool(global_step >= max_train_steps),
         "tokens_seen": int(tokens_seen),
         "samples_seen": int(samples_seen),
         "epoch": int(epoch),

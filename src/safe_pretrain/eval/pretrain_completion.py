@@ -12,30 +12,21 @@ from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from safe_pretrain.synthetic.io import iter_jsonl
-from safe_pretrain.train.sft_accuracy import (
-    _assistant_content,
-    _chat_generation_prompt,
-    _generate_qa_predictions,
-    parse_answer_items,
-    task_group,
-)
+from safe_pretrain.train.sft_accuracy import _generate_qa_predictions, parse_answer_items
 
 
-def evaluate_sft_qa(cfg: Any) -> Path:
+def evaluate_pretrain_completion(cfg: Any) -> Path:
     cfg_dict = OmegaConf.to_container(cfg, resolve=True) if not isinstance(cfg, dict) else cfg
     model_dir = _resolve_model_dir(Path(cfg_dict["model"]))
-    sft_dir = Path(cfg_dict["sft_dir"])
-    output_dir = Path(cfg_dict.get("output_dir") or model_dir / "eval_sft_qa")
+    pretrain_dir = Path(cfg_dict["pretrain_dir"])
+    output_dir = Path(cfg_dict.get("output_dir") or model_dir / "eval_pretrain_completion")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    eval_safe_file = Path(cfg_dict.get("eval_safe_file") or sft_dir / "eval_safe.jsonl")
-    attack_file = Path(cfg_dict.get("attack_file") or sft_dir / "eval_attack.jsonl")
-    chat_template_path = Path(cfg_dict.get("chat_template_path") or sft_dir / "chat_template.jinja")
-    for path, name in (
-        (eval_safe_file, "eval_safe_file"),
-        (attack_file, "attack_file"),
-        (chat_template_path, "chat_template_path"),
-    ):
+    memory_file = Path(cfg_dict.get("memory_file") or pretrain_dir / "eval_memory.jsonl")
+    template_file = Path(
+        cfg_dict.get("template_file") or pretrain_dir / "eval_template_heldout.jsonl"
+    )
+    for path, name in ((memory_file, "memory_file"), (template_file, "template_file")):
         if not path.exists():
             raise FileNotFoundError(f"{name} does not exist: {path}")
 
@@ -49,7 +40,6 @@ def evaluate_sft_qa(cfg: Any) -> Path:
         raise ValueError("max_new_tokens must be positive")
 
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
-    tokenizer.chat_template = chat_template_path.read_text(encoding="utf-8")
     if tokenizer.pad_token is None:
         if tokenizer.eos_token is None:
             raise ValueError("Tokenizer must define eos_token so it can be used as pad_token.")
@@ -63,48 +53,39 @@ def evaluate_sft_qa(cfg: Any) -> Path:
     model.to(device)
     model.eval()
 
-    eval_safe_rows = _sample_rows(list(iter_jsonl(eval_safe_file)), max_examples, seed)
-    attack_rows = _sample_rows(list(iter_jsonl(attack_file)), max_examples, seed + 1)
-    eval_safe_results = _evaluate_rows(
+    memory_rows = _sample_rows(list(iter_jsonl(memory_file)), max_examples, seed)
+    template_rows = _sample_rows(list(iter_jsonl(template_file)), max_examples, seed + 1)
+    memory_results = _evaluate_rows(
         model=model,
         tokenizer=tokenizer,
-        rows=eval_safe_rows,
+        rows=memory_rows,
         batch_size=batch_size,
         max_new_tokens=max_new_tokens,
-        desc="eval safe",
+        desc="pretrain memory",
     )
-    attack_results = _evaluate_rows(
+    template_results = _evaluate_rows(
         model=model,
         tokenizer=tokenizer,
-        rows=attack_rows,
+        rows=template_rows,
         batch_size=batch_size,
         max_new_tokens=max_new_tokens,
-        desc="eval sft attack",
+        desc="pretrain template heldout",
     )
 
     metrics = {
         "model": str(model_dir),
-        "sft_dir": str(sft_dir),
-        "eval_safe_file": str(eval_safe_file),
-        "attack_file": str(attack_file),
-        "chat_template_path": str(chat_template_path),
+        "pretrain_dir": str(pretrain_dir),
+        "memory_file": str(memory_file),
+        "template_file": str(template_file),
         "batch_size": batch_size,
         "max_new_tokens": max_new_tokens,
-        "eval_safe": _summarize_results(eval_safe_results),
-        "attack": _summarize_attack(attack_results),
+        "memory": _summarize_results(memory_results),
+        "template_heldout": _summarize_results(template_results),
     }
-    _write_jsonl(output_dir / "eval_safe_predictions.jsonl", eval_safe_results)
-    _write_jsonl(output_dir / "eval_attack_predictions.jsonl", attack_results)
+    _write_jsonl(output_dir / "memory_predictions.jsonl", memory_results)
+    _write_jsonl(output_dir / "template_heldout_predictions.jsonl", template_results)
     _write_json(output_dir / "metrics.json", metrics)
     return output_dir
-
-
-def _resolve_model_dir(path: Path) -> Path:
-    if (path / "hf_model").exists():
-        return path / "hf_model"
-    if not path.exists():
-        raise FileNotFoundError(f"Model directory does not exist: {path}")
-    return path
 
 
 def _evaluate_rows(
@@ -116,7 +97,7 @@ def _evaluate_rows(
     max_new_tokens: int,
     desc: str,
 ) -> list[dict[str, Any]]:
-    prompts = [_chat_generation_prompt(row, tokenizer) for row in rows]
+    prompts = [str(row["prompt"]) for row in rows]
     predictions: list[str] = []
     for start in tqdm(range(0, len(prompts), batch_size), desc=desc, unit="batch"):
         predictions.extend(
@@ -132,28 +113,22 @@ def _evaluate_rows(
     results = []
     for row, prediction in zip(rows, predictions, strict=True):
         metadata = row.get("metadata") or {}
-        gold_text = _assistant_content(row)
+        gold_text = str(row["completion"])
         gold_items = parse_answer_items(gold_text, tokenizer)
         pred_items = parse_answer_items(prediction, tokenizer)
         format_ok = bool(pred_items)
         exact = format_ok and set(pred_items) == set(gold_items)
         results.append(
             {
+                "relation_id": metadata.get("relation_id"),
                 "effect_id": metadata.get("effect_id"),
-                "qa_type": metadata.get("qa_type"),
-                "task": task_group(metadata),
-                "eval_type": metadata.get("eval_type", "unknown"),
-                "exposure_type": metadata.get("exposure_type", "unknown"),
-                "pattern": metadata.get("pattern", "unknown"),
+                "pattern": metadata.get("pattern"),
                 "partition": metadata.get("partition"),
-                "relation_group": metadata.get("relation_group", "unknown"),
-                "sft_train_exposure": metadata.get("sft_train_exposure", "unknown"),
-                "pattern_seen_in_sft": bool(metadata.get("pattern_seen_in_sft", False)),
+                "qa_type": metadata.get("qa_type"),
+                "exposure_type": metadata.get("exposure_type"),
+                "pattern_seen_in_pretrain": bool(metadata.get("pattern_seen_in_pretrain", False)),
                 "unsafe_direct_reverse": bool(metadata.get("unsafe_direct_reverse", False)),
-                "reverse_train_exposure": bool(metadata.get("reverse_train_exposure", False)),
-                "relation_heldout_from_sft": bool(
-                    metadata.get("relation_heldout_from_sft", False)
-                ),
+                "prompt": row["prompt"],
                 "gold": gold_text,
                 "prediction": prediction,
                 "gold_items": gold_items,
@@ -166,28 +141,14 @@ def _evaluate_rows(
     return results
 
 
-def _summarize_attack(results: list[dict[str, Any]]) -> dict[str, Any]:
-    summary = _summarize_results(results)
-    summary["asr_restricted_all"] = _metric(results, "exact")
-    for group in ("restricted_forward_seen", "restricted_sft_unseen"):
-        group_results = [result for result in results if result["relation_group"] == group]
-        summary[f"asr_{group}"] = _metric(group_results, "exact")
-        summary[f"{group}_num_examples"] = len(group_results)
-    summary["format_rate"] = _metric(results, "format")
-    return summary
-
-
 def _summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "overall": _summary(results),
-        "by_qa_type": _group_summary(results, "qa_type"),
-        "by_task": _group_summary(results, "task"),
         "by_exposure_type": _group_summary(results, "exposure_type"),
         "by_pattern": _group_summary(results, "pattern"),
         "by_partition": _group_summary(results, "partition"),
-        "by_relation_group": _group_summary(results, "relation_group"),
-        "by_sft_train_exposure": _group_summary(results, "sft_train_exposure"),
-        "by_pattern_seen_in_sft": _group_summary(results, "pattern_seen_in_sft"),
+        "by_qa_type": _group_summary(results, "qa_type"),
+        "by_pattern_seen_in_pretrain": _group_summary(results, "pattern_seen_in_pretrain"),
     }
 
 
@@ -218,6 +179,14 @@ def _sample_rows(rows: list[dict[str, Any]], max_examples: int | None, seed: int
         return rows
     rng = random.Random(seed)
     return [rows[index] for index in sorted(rng.sample(range(len(rows)), max_examples))]
+
+
+def _resolve_model_dir(path: Path) -> Path:
+    if (path / "hf_model").exists():
+        return path / "hf_model"
+    if not path.exists():
+        raise FileNotFoundError(f"Model directory does not exist: {path}")
+    return path
 
 
 def _resolve_device(value: str) -> torch.device:
