@@ -206,28 +206,29 @@ SCHEDULER_DRY_RUN=true FINAL_EXPERIMENT_CONCURRENCY=2 \
 ## Core Final Results
 
 Metrics in the table use the following standards. `Pretrain memory` is
-completion exact match on sampled pretraining rows. `Pretrain template` is
-completion exact match on held-out templates. `Heldout open QA` is exact-match
-safe QA on open relations held out from safe SFT training. `Restricted reverse
-ASR` is exact-match attack success on restricted reverse queries whose direct
-answers never appear in safe pretraining or safe SFT.
+completion exact match on sampled pretraining rows. `Pretrain seen-template` is
+completion exact match on held-out templates for patterns that are seen during
+safe pretraining. `Heldout open QA` is exact-match safe QA on open relations
+held out from safe SFT training. `Restricted reverse ASR` is exact-match attack
+success on restricted reverse queries whose direct answers never appear in safe
+pretraining or safe SFT.
 
-| Setting | Pretrain memory | Pretrain template | Heldout open QA | Restricted reverse ASR |
+| Setting | Pretrain memory | Pretrain seen-template | Heldout open QA | Restricted reverse ASR |
 | --- | ---: | ---: | ---: | ---: |
-| OCR canonical | 84.28 | 65.82 | 93.21 | 69.57 |
-| OCR, FI repeats 1 | 84.28 | 65.82 | 92.93 | 63.04 |
-| OCR, FI repeats 2 | 84.28 | 65.82 | 92.12 | 69.57 |
-| OCR, FI repeats 4 | 84.28 | 65.82 | 91.58 | 68.48 |
-| OCR, FI repeats 8 | 84.28 | 65.82 | 94.02 | 64.13 |
-| OCR, ChatML train/eval | 84.28 | 65.82 | 0.00 | 0.00 |
-| OCR, weight decay 0.1 | 81.69 | 64.80 | 94.02 | 52.17 |
-| OCR, weight decay 2.0 | 83.40 | 64.98 | 92.93 | 67.39 |
-| OCR, 512 effects | 85.16 | 65.55 | 95.65 | 52.17 |
-| OCR, 2048 effects | 71.73 | 55.63 | 86.14 | 51.89 |
-| OCR, arity-2 overlap | 75.12 | 56.89 | 70.38 | 10.87 |
-| Vanilla control | 100.00 | 95.02 | 23.37 | 0.00 |
-| OCR-linear | 99.98 | 78.11 | 36.96 | 53.26 |
-| Prevention | 72.12 | 74.77 | 81.52 | 100.00 |
+| OCR canonical | 84.28 | 83.15 | 93.21 | 69.57 |
+| OCR, FI repeats 1 | 84.28 | 83.15 | 92.93 | 63.04 |
+| OCR, FI repeats 2 | 84.28 | 83.15 | 92.12 | 69.57 |
+| OCR, FI repeats 4 | 84.28 | 83.15 | 91.58 | 68.48 |
+| OCR, FI repeats 8 | 84.28 | 83.15 | 94.02 | 64.13 |
+| OCR, ChatML train/eval | 84.28 | 83.15 | 0.00 | 0.00 |
+| OCR, weight decay 0.1 | 81.69 | 82.37 | 94.02 | 52.17 |
+| OCR, weight decay 2.0 | 83.40 | 82.20 | 92.93 | 67.39 |
+| OCR, 512 effects | 85.16 | 81.37 | 95.65 | 52.17 |
+| OCR, 2048 effects | 71.73 | 69.63 | 86.14 | 51.89 |
+| OCR, arity-2 overlap | 75.12 | 72.71 | 70.38 | 10.87 |
+| Vanilla control | 100.00 | 100.00 | 23.37 | 0.00 |
+| OCR-linear | 99.98 | 99.77 | 36.96 | 53.26 |
+| Prevention | 72.12 | 73.94 | 81.52 | 100.00 |
 | Mirror | 100.00 | 100.00 | 45.65 | 52.17 |
 
 Main takeaways:
