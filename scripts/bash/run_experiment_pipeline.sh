@@ -62,7 +62,8 @@ PRETRAIN_EVAL_TEMPLATE_EXAMPLES_PER_PATTERN="${PRETRAIN_EVAL_TEMPLATE_EXAMPLES_P
 
 SFT_INCLUDE_VALIDATION="${SFT_INCLUDE_VALIDATION:-false}"
 SFT_VALIDATION_FRACTION="${SFT_VALIDATION_FRACTION:-0.0}"
-SFT_EVAL_INCLUDE_MEMORY="${SFT_EVAL_INCLUDE_MEMORY:-true}"
+SFT_TEST_RELATION_FRACTION="${SFT_TEST_RELATION_FRACTION:-0.1}"
+SFT_EVAL_INCLUDE_MEMORY="${SFT_EVAL_INCLUDE_MEMORY:-false}"
 SFT_EVAL_TEMPLATE_EXAMPLES_PER_PATTERN="${SFT_EVAL_TEMPLATE_EXAMPLES_PER_PATTERN:-1}"
 SFT_EVAL_ATTACK_EXAMPLES_PER_PATTERN="${SFT_EVAL_ATTACK_EXAMPLES_PER_PATTERN:-1}"
 
@@ -194,6 +195,7 @@ DATA_OVERRIDES=(
   "sft.chat_template=${CHAT_TEMPLATE}"
   "sft.include_validation=${SFT_INCLUDE_VALIDATION}"
   "sft.validation_fraction=${SFT_VALIDATION_FRACTION}"
+  "sft.test_relation_fraction=${SFT_TEST_RELATION_FRACTION}"
   "sft.eval.include_memory=${SFT_EVAL_INCLUDE_MEMORY}"
   "sft.eval.template_examples_per_pattern=${SFT_EVAL_TEMPLATE_EXAMPLES_PER_PATTERN}"
   "sft.eval.attack_examples_per_pattern=${SFT_EVAL_ATTACK_EXAMPLES_PER_PATTERN}"
@@ -324,7 +326,7 @@ artifact_ready() {
   echo "${output}" >&2
   if [[ "${status}" -eq 2 ]]; then
     echo "Configured ${stage} artifact does not match the current config." >&2
-    echo "Use a new EXPERIMENT_NAME/WORLD_NAME, or set OVERWRITE_DATA=true to rebuild." >&2
+    echo "Use a new EXPERIMENT_NAME/WORLD_NAME, set OVERWRITE_DATA=true for an individual experiment, or inspect before overwriting." >&2
   fi
   exit "${status}"
 }

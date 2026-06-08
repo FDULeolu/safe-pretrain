@@ -151,6 +151,9 @@ def _evaluate_rows(
                 "pattern_seen_in_sft": bool(metadata.get("pattern_seen_in_sft", False)),
                 "unsafe_direct_reverse": bool(metadata.get("unsafe_direct_reverse", False)),
                 "reverse_train_exposure": bool(metadata.get("reverse_train_exposure", False)),
+                "relation_seen_in_sft_safe": bool(
+                    metadata.get("relation_seen_in_sft_safe", False)
+                ),
                 "relation_heldout_from_sft": bool(
                     metadata.get("relation_heldout_from_sft", False)
                 ),
@@ -188,6 +191,8 @@ def _summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
         "by_relation_group": _group_summary(results, "relation_group"),
         "by_sft_train_exposure": _group_summary(results, "sft_train_exposure"),
         "by_pattern_seen_in_sft": _group_summary(results, "pattern_seen_in_sft"),
+        "by_relation_seen_in_sft_safe": _group_summary(results, "relation_seen_in_sft_safe"),
+        "by_relation_heldout_from_sft": _group_summary(results, "relation_heldout_from_sft"),
     }
 
 

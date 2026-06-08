@@ -76,9 +76,13 @@ Evaluation separates:
 
 - **Pretrain completion accuracy:** greedy completion on pretraining memory and
   held-out templates, to check whether the model learned the synthetic facts.
-- **Safe QA accuracy:** exact-match accuracy on safe user queries after SFT.
+- **Safe QA accuracy:** exact-match accuracy on safe user queries from relations
+  held out of safe SFT training. The split is controlled by
+  `sft.test_relation_fraction`.
 - **Restricted reverse ASR:** exact-match attack success rate on restricted
   reverse queries that were never directly demonstrated in safe train splits.
+  By default, ASR uses restricted relations that were seen in safe SFT
+  directions, isolating unsafe behavior generalization from relation recall.
 
 All data builders include leakage audits; the final runs report zero direct
 restricted reverse records in safe pretraining and safe SFT splits.
@@ -119,6 +123,10 @@ The launcher resumes or skips completed matching checkpoints by default. To
 force a data rebuild, use a new experiment/output name or explicitly set
 `OVERWRITE_DATA=true` for an individual experiment. The main scheduler refuses
 `OVERWRITE_DATA=true` to avoid accidental races.
+
+For result reporting, use `eval_safe.by_relation_group.open_sft_unseen` as the
+safe open generalization metric and `attack.asr_restricted_all` as the
+restricted reverse attack metric.
 
 ## Final Experiment Recipes
 
@@ -197,39 +205,49 @@ SCHEDULER_DRY_RUN=true FINAL_EXPERIMENT_CONCURRENCY=2 \
 
 ## Core Final Results
 
-The final results below use fixed pretrain completion evaluation: completion
-prompts are stripped of trailing whitespace before tokenization so the prompt is
-a true BPE prefix of the training text.
+Metrics in the table use the following standards. `Pretrain memory` is
+completion exact match on sampled pretraining rows. `Pretrain template` is
+completion exact match on held-out templates. `Heldout open QA` is exact-match
+safe QA on open relations held out from safe SFT training. `Restricted reverse
+ASR` is exact-match attack success on restricted reverse queries whose direct
+answers never appear in safe pretraining or safe SFT.
 
-| Setting | Pretrain memory | Pretrain template | Safe QA | Restricted reverse ASR |
+| Setting | Pretrain memory | Pretrain template | Heldout open QA | Restricted reverse ASR |
 | --- | ---: | ---: | ---: | ---: |
-| OCR canonical | 84.28 | 65.82 | 100.00 | 67.65 |
-| OCR, FI repeats 1 | 84.28 | 65.82 | 100.00 | 63.73 |
-| OCR, FI repeats 8 | 84.28 | 65.82 | 99.99 | 61.76 |
-| OCR, weight decay 0.1 | 81.69 | 64.80 | 99.98 | 47.06 |
-| OCR, weight decay 2.0 | 83.40 | 64.98 | 100.00 | 63.73 |
-| OCR, 512 effects | 85.16 | 65.55 | 100.00 | 50.98 |
-| OCR, 2048 effects | 71.73 | 55.63 | 99.98 | 51.22 |
-| OCR, arity-2 overlap | 75.12 | 56.89 | 99.76 | 6.86 |
-| Vanilla control | 100.00 | 95.02 | 99.87 | 0.00 |
-| OCR-linear | 99.98 | 78.11 | 99.99 | 54.90 |
-| Prevention | 72.12 | 74.77 | 100.00 | 99.02 |
-| Mirror | 100.00 | 100.00 | 99.92 | 54.90 |
+| OCR canonical | 84.28 | 65.82 | 93.21 | 69.57 |
+| OCR, FI repeats 1 | 84.28 | 65.82 | 92.93 | 63.04 |
+| OCR, FI repeats 2 | 84.28 | 65.82 | 92.12 | 69.57 |
+| OCR, FI repeats 4 | 84.28 | 65.82 | 91.58 | 68.48 |
+| OCR, FI repeats 8 | 84.28 | 65.82 | 94.02 | 64.13 |
+| OCR, ChatML train/eval | 84.28 | 65.82 | 0.00 | 0.00 |
+| OCR, weight decay 0.1 | 81.69 | 64.80 | 94.02 | 52.17 |
+| OCR, weight decay 2.0 | 83.40 | 64.98 | 92.93 | 67.39 |
+| OCR, 512 effects | 85.16 | 65.55 | 95.65 | 52.17 |
+| OCR, 2048 effects | 71.73 | 55.63 | 86.14 | 51.89 |
+| OCR, arity-2 overlap | 75.12 | 56.89 | 70.38 | 10.87 |
+| Vanilla control | 100.00 | 95.02 | 23.37 | 0.00 |
+| OCR-linear | 99.98 | 78.11 | 36.96 | 53.26 |
+| Prevention | 72.12 | 74.77 | 81.52 | 100.00 |
+| Mirror | 100.00 | 100.00 | 45.65 | 52.17 |
 
 Main takeaways:
 
 - The canonical OCR model learns the synthetic facts during safe pretraining
-  and reaches perfect safe QA after SFT, while restricted reverse ASR is 67.65%.
+  and reaches `93.21%` heldout open QA after SFT, while restricted reverse ASR
+  is `69.57%`.
 - The effect is not caused by direct leakage: safe pretraining and safe SFT
   splits contain zero direct restricted reverse examples.
 - OCR robustness checks do not show a monotone control knob; they show that
   high ASR persists across several benign training choices.
 - Chat interface matters: matched plain-text chat gives high ASR, while matched
-  ChatML gives 0.00% ASR and lower safe QA in this small-from-scratch setting.
-- The arity-2 overlap world sharply reduces ASR, indicating that the canonical
-  OCR result relies on the simpler single-cause lookup structure.
+  ChatML gives `0.00%` heldout open QA and `0.00%` ASR in this small-from-scratch
+  setting.
+- The arity-2 overlap world sharply reduces both heldout open QA and ASR,
+  indicating that the canonical OCR result relies on the simpler single-cause
+  lookup structure.
 - Prevention is the strongest safety-pretraining analogy in the final family
-  comparison, with 99.02% restricted reverse ASR after safe SFT.
+  comparison, with `81.52%` heldout open QA and `100.00%` restricted reverse
+  ASR after safe SFT.
 
 ## Manual Entrypoints
 

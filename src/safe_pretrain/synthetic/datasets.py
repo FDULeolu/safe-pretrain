@@ -412,13 +412,16 @@ def build_sft_corpus(cfg: Any, world_path: str | Path) -> Path:
     if chat_template not in CHAT_TEMPLATES:
         raise ValueError(f"Unsupported sft.chat_template: {chat_template}")
     eval_cfg = sft_cfg.get("eval", {})
-    eval_include_memory = bool(eval_cfg.get("include_memory", True))
+    eval_include_memory = bool(eval_cfg.get("include_memory", False))
     eval_template_examples_per_pattern = int(eval_cfg.get("template_examples_per_pattern", 1))
     eval_attack_examples_per_pattern = int(eval_cfg.get("attack_examples_per_pattern", 1))
     if eval_template_examples_per_pattern < 0:
         raise ValueError("sft.eval.template_examples_per_pattern must be nonnegative")
     if eval_attack_examples_per_pattern < 0:
         raise ValueError("sft.eval.attack_examples_per_pattern must be nonnegative")
+    test_relation_fraction = float(sft_cfg.get("test_relation_fraction", 0.1))
+    if not 0 <= test_relation_fraction < 1:
+        raise ValueError("sft.test_relation_fraction must be in [0, 1)")
 
     train_path = output_dir / "sft_train.jsonl"
     validation_path = output_dir / "sft_validation.jsonl"
@@ -429,75 +432,94 @@ def build_sft_corpus(cfg: Any, world_path: str | Path) -> Path:
     validation_fraction = float(sft_cfg.get("validation_fraction", 0.0 if not include_validation else 0.1))
     if not 0 <= validation_fraction < 1:
         raise ValueError("sft.validation_fraction must be in [0, 1)")
-    rng = random.Random(int(sft_cfg.get("seed", experiment_cfg.get("seed", 42))))
+    seed = int(sft_cfg.get("seed", experiment_cfg.get("seed", 42)))
+    rng = random.Random(seed)
+    relations = list(world["relations"])
+    test_relation_ids = _select_sft_test_relation_ids(
+        relations,
+        fraction=test_relation_fraction,
+        seed=seed + 10_003,
+    )
 
     train_handle = train_path.open("w", encoding="utf-8")
     validation_handle = validation_path.open("w", encoding="utf-8") if include_validation else None
     eval_safe_handle = eval_safe_path.open("w", encoding="utf-8")
     attack_handle = attack_path.open("w", encoding="utf-8")
     try:
-        for relation_index, relation in enumerate(world["relations"]):
+        for relation_index, relation in enumerate(relations):
             partition = relation["partition"]
+            relation_id = str(relation["effect_id"])
+            is_test_relation = relation_id in test_relation_ids
             safe_patterns = _expanded_sft_patterns(
                 policy["open_safe"] if partition == "open" else policy["restricted_safe"],
                 pattern_repeats=pattern_repeats,
             )
-            for pattern_occurrence, pattern in enumerate(safe_patterns):
-                for local_index in range(examples_per_pattern):
-                    sample_index = pattern_occurrence * examples_per_pattern + local_index
-                    split = "validation" if include_validation and rng.random() < validation_fraction else "train"
-                    row = _sft_row(
-                        renderer,
-                        relation,
-                        pattern=pattern,
-                        split=split,
-                        sample_index=sample_index,
-                        world_id=world["manifest"]["world_id"],
-                    )
-                    stats.add(row)
-                    if split == "validation":
-                        assert validation_handle is not None
-                        validation_handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-                    else:
-                        train_handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-                        if eval_include_memory:
-                            eval_safe_handle.write(
-                                json.dumps(
-                                    _sft_eval_row(row, eval_type="safe", exposure_type="memory"),
-                                    ensure_ascii=False,
-                                )
-                                + "\n"
-                            )
 
-            for pattern in policy["open_safe"] if partition == "open" else policy["restricted_safe"]:
-                for local_index in range(eval_template_examples_per_pattern):
-                    row = _sft_row(
-                        renderer,
-                        relation,
-                        pattern=pattern,
-                        split="eval_safe",
-                        sample_index=_eval_sample_index(
-                            relation_index=relation_index,
-                            pattern_index=_pattern_index(family, pattern),
-                            local_index=local_index,
-                            offset=20_000_000,
-                        ),
-                        world_id=world["manifest"]["world_id"],
-                        stage="sft_eval",
-                    )
-                    eval_safe_handle.write(
-                        json.dumps(
-                            _sft_eval_row(
-                                row,
-                                eval_type="safe",
-                                exposure_type="template_heldout",
-                            ),
-                            ensure_ascii=False,
+            if not is_test_relation:
+                for pattern_occurrence, pattern in enumerate(safe_patterns):
+                    for local_index in range(examples_per_pattern):
+                        sample_index = pattern_occurrence * examples_per_pattern + local_index
+                        split = "validation" if include_validation and rng.random() < validation_fraction else "train"
+                        row = _sft_row(
+                            renderer,
+                            relation,
+                            pattern=pattern,
+                            split=split,
+                            sample_index=sample_index,
+                            world_id=world["manifest"]["world_id"],
                         )
-                        + "\n"
-                    )
+                        stats.add(row)
+                        if split == "validation":
+                            assert validation_handle is not None
+                            validation_handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+                        else:
+                            train_handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+                            if eval_include_memory:
+                                eval_safe_handle.write(
+                                    json.dumps(
+                                        _sft_eval_row(
+                                            row,
+                                            eval_type="safe",
+                                            exposure_type="memory",
+                                        ),
+                                        ensure_ascii=False,
+                                    )
+                                    + "\n"
+                                )
 
-            if partition == "restricted":
+            if is_test_relation or test_relation_fraction == 0:
+                exposure_type = "relation_heldout" if is_test_relation else "template_heldout"
+                for pattern in policy["open_safe"] if partition == "open" else policy["restricted_safe"]:
+                    for local_index in range(eval_template_examples_per_pattern):
+                        row = _sft_row(
+                            renderer,
+                            relation,
+                            pattern=pattern,
+                            split="eval_safe",
+                            sample_index=_eval_sample_index(
+                                relation_index=relation_index,
+                                pattern_index=_pattern_index(family, pattern),
+                                local_index=local_index,
+                                offset=20_000_000,
+                            ),
+                            world_id=world["manifest"]["world_id"],
+                            stage="sft_eval",
+                        )
+                        eval_safe_handle.write(
+                            json.dumps(
+                                _sft_eval_row(
+                                    row,
+                                    eval_type="safe",
+                                    exposure_type=exposure_type,
+                                    relation_seen_in_sft_safe=not is_test_relation,
+                                    relation_heldout_from_sft=is_test_relation,
+                                ),
+                                ensure_ascii=False,
+                            )
+                            + "\n"
+                        )
+
+            if partition == "restricted" and not is_test_relation:
                 for pattern in policy["restricted_attack"]:
                     for local_index in range(eval_attack_examples_per_pattern):
                         row = _sft_row(
@@ -547,6 +569,8 @@ def build_sft_corpus(cfg: Any, world_path: str | Path) -> Path:
         "created_utc": datetime.now(UTC).isoformat(),
         "chat_template": chat_template,
         "include_validation": include_validation,
+        "test_relation_fraction": test_relation_fraction,
+        "test_relation_count": len(test_relation_ids),
         "examples_per_pattern": examples_per_pattern,
         "pattern_repeats": pattern_repeats,
         "eval": {
@@ -555,6 +579,7 @@ def build_sft_corpus(cfg: Any, world_path: str | Path) -> Path:
             "attack_examples_per_pattern": eval_attack_examples_per_pattern,
         },
         "pattern_policy": policy,
+        "test_relation_ids": sorted(test_relation_ids),
         "files": {
             "train": "sft_train.jsonl",
             "validation": "sft_validation.jsonl",
@@ -571,6 +596,33 @@ def build_sft_corpus(cfg: Any, world_path: str | Path) -> Path:
     write_json(output_dir / "sft_manifest.json", manifest)
     _append_registry(cfg_dict, manifest, output_dir)
     return output_dir
+
+
+def _select_sft_test_relation_ids(
+    relations: list[dict[str, Any]],
+    *,
+    fraction: float,
+    seed: int,
+) -> set[str]:
+    """Sample a stratified relation-level safe test split."""
+
+    if fraction <= 0:
+        return set()
+    rng = random.Random(seed)
+    by_partition: dict[str, list[int]] = {}
+    for index, relation in enumerate(relations):
+        by_partition.setdefault(str(relation["partition"]), []).append(index)
+
+    selected: set[str] = set()
+    for partition in sorted(by_partition):
+        indices = list(by_partition[partition])
+        if len(indices) <= 1:
+            continue
+        count = max(1, round(len(indices) * fraction))
+        count = min(count, len(indices) - 1)
+        for relation_index in rng.sample(indices, count):
+            selected.add(str(relations[relation_index]["effect_id"]))
+    return selected
 
 
 class FamilyRenderer:
@@ -1069,26 +1121,33 @@ def _sft_eval_row(
     *,
     eval_type: str,
     exposure_type: str,
+    relation_seen_in_sft_safe: bool = True,
+    relation_heldout_from_sft: bool = False,
 ) -> dict[str, Any]:
     metadata = dict(row["metadata"])
     partition = str(metadata.get("partition", "unknown"))
     pattern = str(metadata.get("pattern", "unknown"))
     is_attack = eval_type == "attack"
-    relation_group = (
-        "restricted_forward_seen"
-        if partition == "restricted"
-        else "open_safe"
-    )
+    if partition == "restricted":
+        relation_group = (
+            "restricted_forward_seen"
+            if relation_seen_in_sft_safe
+            else "restricted_sft_unseen"
+        )
+    else:
+        relation_group = "open_safe" if relation_seen_in_sft_safe else "open_sft_unseen"
     metadata.update(
         {
             "eval_stage": "sft",
             "eval_type": eval_type,
             "exposure_type": exposure_type,
-            "relation_seen_in_sft_safe": True,
+            "relation_seen_in_sft_safe": relation_seen_in_sft_safe,
             "pattern_seen_in_sft": not is_attack,
             "sft_train_exposure": "safe_only" if is_attack else exposure_type,
-            "reverse_train_exposure": partition == "open" and pattern == "reverse",
-            "relation_heldout_from_sft": False,
+            "reverse_train_exposure": (
+                relation_seen_in_sft_safe and partition == "open" and pattern == "reverse"
+            ),
+            "relation_heldout_from_sft": relation_heldout_from_sft,
             "relation_group": relation_group,
         }
     )

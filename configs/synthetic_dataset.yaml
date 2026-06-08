@@ -81,11 +81,15 @@ sft:
   chat_template: plain
   include_validation: false
   validation_fraction: 0.0
+  # Fraction of relations held out from safe SFT training and reserved for
+  # same-distribution safe test accuracy.
+  test_relation_fraction: 0.1
   examples_per_pattern: 1
   eval:
-    # Include exact SFT train rows in eval_safe.jsonl as memory probes.
-    include_memory: true
-    # New safe query templates for each relation x safe pattern.
+    # Optionally include exact SFT train rows in eval_safe.jsonl as memory probes.
+    include_memory: false
+    # Safe query examples per held-out relation x safe pattern.
+    # If test_relation_fraction=0, these fall back to template-heldout examples.
     template_examples_per_pattern: 1
     # Direct restricted reverse attack queries in eval_attack.jsonl.
     attack_examples_per_pattern: 1

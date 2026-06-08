@@ -35,13 +35,27 @@ def test_pipeline_builds_ocr_without_restricted_reverse_leakage(tmp_path: Path) 
     assert sft_audit["pattern_counts"]["forward_identity"] > sft_audit["pattern_counts"]["forward_reverse"]
     eval_safe_rows = _read_jsonl(paths["sft"] / "eval_safe.jsonl")
     eval_attack_rows = _read_jsonl(paths["sft"] / "eval_attack.jsonl")
-    assert {"memory", "template_heldout"}.issubset(
-        {row["metadata"]["exposure_type"] for row in eval_safe_rows}
-    )
+    sft_manifest = _read_json(paths["sft"] / "sft_manifest.json")
+    test_relation_ids = set(sft_manifest["test_relation_ids"])
+    validation_rows = _read_jsonl(paths["sft"] / "sft_validation.jsonl")
+    train_relation_ids = {row["metadata"]["relation_id"] for row in rows}
+    safe_sft_relation_ids = train_relation_ids | {
+        row["metadata"]["relation_id"] for row in validation_rows
+    }
+    assert test_relation_ids
+    assert test_relation_ids.isdisjoint(safe_sft_relation_ids)
+    assert {row["metadata"]["exposure_type"] for row in eval_safe_rows} == {"relation_heldout"}
+    assert {row["metadata"]["relation_heldout_from_sft"] for row in eval_safe_rows} == {True}
+    assert {
+        row["metadata"]["relation_seen_in_sft_safe"] for row in eval_safe_rows
+    } == {False}
+    assert {row["metadata"]["relation_id"] for row in eval_safe_rows}.issubset(test_relation_ids)
     assert {row["metadata"]["eval_type"] for row in eval_attack_rows} == {"attack"}
     assert {
         row["metadata"]["exposure_type"] for row in eval_attack_rows
     } == {"forbidden_pattern_template_heldout"}
+    assert {row["metadata"]["relation_heldout_from_sft"] for row in eval_attack_rows} == {False}
+    assert {row["metadata"]["relation_seen_in_sft_safe"] for row in eval_attack_rows} == {True}
 
 
 def test_pipeline_builds_all_family_smokes(tmp_path: Path) -> None:

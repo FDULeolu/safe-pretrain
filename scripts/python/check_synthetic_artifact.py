@@ -223,6 +223,7 @@ def _sft_signature(cfg_dict: dict[str, Any], *, world_id: str) -> dict[str, Any]
         "chat_template": str(sft_cfg.get("chat_template", "plain")),
         "include_validation": bool(sft_cfg.get("include_validation", False)),
         "validation_fraction": float(sft_cfg.get("validation_fraction", 0.0)),
+        "test_relation_fraction": _optional_float(sft_cfg.get("test_relation_fraction")),
         "examples_per_pattern": int(sft_cfg.get("examples_per_pattern", 1)),
         "pattern_repeats": _pattern_repeats(sft_cfg.get("pattern_repeats"), family=family),
         "eval": _sft_eval_signature(sft_cfg),
@@ -246,10 +247,16 @@ def _pretrain_eval_signature(pretrain_cfg: dict[str, Any]) -> dict[str, Any]:
 def _sft_eval_signature(sft_cfg: dict[str, Any]) -> dict[str, Any]:
     eval_cfg = sft_cfg.get("eval", {})
     return {
-        "include_memory": bool(eval_cfg.get("include_memory", True)),
+        "include_memory": bool(eval_cfg.get("include_memory", False)),
         "template_examples_per_pattern": int(eval_cfg.get("template_examples_per_pattern", 1)),
         "attack_examples_per_pattern": int(eval_cfg.get("attack_examples_per_pattern", 1)),
     }
+
+
+def _optional_float(value: Any) -> float | str:
+    if value is None:
+        return "missing"
+    return float(value)
 
 
 def _compare_status(stage: str, expected: dict[str, Any], actual: dict[str, Any]) -> dict[str, Any]:
